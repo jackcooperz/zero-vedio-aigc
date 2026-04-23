@@ -1,6 +1,7 @@
 import { ZeroTokenError } from "../errors.js";
 import type { AuthProfile, ZeroTokenRequest, ZeroTokenResult, ZeroTokenTransport, WebProviderConfig } from "../types.js";
-import { extractDoubaoGeneratedImagesFromSse, extractDoubaoSseText, extractImageUrlsDeep, extractSseText, getPromptFromInput, interpolateTemplate } from "../utils.js";
+import { parseProviderResponse } from "../providers/parsers.js";
+import { getPromptFromInput, interpolateTemplate } from "../utils.js";
 
 export async function runHttpReplayDriver(params: {
   provider: WebProviderConfig;
@@ -51,8 +52,13 @@ export async function runHttpReplayDriver(params: {
   if (cfg.responseMode === "json") {
     json = JSON.parse(raw);
   }
-  const doubaoImages = cfg.responseMode === "sse" ? extractDoubaoGeneratedImagesFromSse(raw) : [];
-  const fallbackImageUrls = doubaoImages.length > 0 ? [] : extractImageUrlsDeep(json ?? raw);
+  const output = parseProviderResponse({
+    parser: cfg.parser,
+    raw,
+    json,
+    responseMode: cfg.responseMode,
+    imageSource: "http_replay",
+  });
 
   return {
     requestId: params.request.requestId,
@@ -60,24 +66,8 @@ export async function runHttpReplayDriver(params: {
     transportUsed: params.transport,
     status: "success",
     output: {
-      text: cfg.responseMode === "sse" ? extractDoubaoSseText(raw) || extractSseText(raw) : raw,
+      ...output,
       json,
-      images: [
-        ...doubaoImages.map((image) => ({
-          url: image.url,
-          width: image.width,
-          height: image.height,
-          metadata: {
-            source: "http_replay",
-            parser: "doubao_creation_block",
-            ...(image.key ? { key: image.key } : {}),
-          },
-        })),
-        ...fallbackImageUrls.map((url) => ({
-          url,
-          metadata: { source: "http_replay" },
-        })),
-      ],
     },
     debug: { url: url.toString(), rawLength: raw.length },
     usage: { billingMode: "web", apiTokens: 0, estimatedCost: 0 },

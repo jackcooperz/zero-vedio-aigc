@@ -7,6 +7,8 @@ export type ZeroTokenTransport =
   | "web_http_replay"
   | "hybrid";
 
+export type ProviderResponseParser = "generic" | "doubao-web-sse";
+
 export type ProviderRef = {
   provider: string;
   model: string;
@@ -100,6 +102,7 @@ export type EvalFetchConfig = {
 
 export type NetworkCaptureConfig = {
   trigger: "dom";
+  parser?: ProviderResponseParser;
   listen: Array<{
     name: string;
     method?: string;
@@ -121,7 +124,7 @@ export type HttpReplayConfig = {
   authSources?: Array<"cookie" | "user_agent" | "headers" | "query_params">;
   dynamicParams?: string[];
   responseMode: "json" | "text" | "sse";
-  parser?: string;
+  parser?: ProviderResponseParser;
 };
 
 export type WebProviderConfig = {
@@ -198,4 +201,3 @@ export type ZeroTokenRuntimeConfig = {
   browserProfiles?: BrowserProfile[];
   authProfiles?: AuthProfile[];
 };
-

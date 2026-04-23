@@ -88,6 +88,7 @@ export function buildDefaultZeroTokenProviders(): WebProviderConfig[] {
       },
       networkCapture: {
         trigger: "dom",
+        parser: "doubao-web-sse",
         listen: [
           {
             name: "doubao_chat_completion",
@@ -109,7 +110,7 @@ export function buildDefaultZeroTokenProviders(): WebProviderConfig[] {
         authSources: ["cookie", "user_agent", "query_params"],
         dynamicParams: ["msToken", "a_bogus", "fp", "tea_uuid", "device_id", "web_tab_id"],
         responseMode: "sse",
-        parser: "doubao_sse_text",
+        parser: "doubao-web-sse",
       },
     },
     {

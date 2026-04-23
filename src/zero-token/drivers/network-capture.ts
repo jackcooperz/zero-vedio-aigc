@@ -1,7 +1,7 @@
 import { ZeroTokenError } from "../errors.js";
 import type { BrowserSessionManager } from "../browser-session.js";
 import type { AuthProfile, ZeroTokenRequest, ZeroTokenResult, ZeroTokenTransport, WebProviderConfig } from "../types.js";
-import { extractDoubaoGeneratedImagesFromSse, extractDoubaoSseText, extractImageUrlsDeep, extractSseText } from "../utils.js";
+import { parseProviderResponse } from "../providers/parsers.js";
 import { sendDomPrompt } from "./dom.js";
 
 export async function runNetworkCaptureDriver(params: {
@@ -44,30 +44,18 @@ export async function runNetworkCaptureDriver(params: {
     await sendDomPrompt({ provider: params.provider, request: params.request, session, auth: params.auth });
     const response = await responsePromise;
     const raw = await response.text();
-    const text = extractDoubaoSseText(raw) || extractSseText(raw);
-    const doubaoImages = extractDoubaoGeneratedImagesFromSse(raw);
-    const fallbackImageUrls = doubaoImages.length > 0 ? [] : extractImageUrlsDeep(raw);
+    const output = parseProviderResponse({
+      parser: cfg.parser,
+      raw,
+      responseMode: "sse",
+      imageSource: "network_capture",
+    });
     return {
       requestId: params.request.requestId,
       providerRef: params.request.providerRef,
       transportUsed: params.transport,
       status: "success",
-      output: {
-        text,
-        images: [
-          ...doubaoImages.map((image) => ({
-            url: image.url,
-            width: image.width,
-            height: image.height,
-            metadata: {
-              source: "network_capture",
-              parser: "doubao_creation_block",
-              ...(image.key ? { key: image.key } : {}),
-            },
-          })),
-          ...fallbackImageUrls.map((url) => ({ url, metadata: { source: "network_capture" } })),
-        ],
-      },
+      output,
       debug: { pageUrl: session.page.url(), rawLength: raw.length },
       usage: { billingMode: "web", apiTokens: 0, estimatedCost: 0 },
     };
