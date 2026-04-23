@@ -1,0 +1,21 @@
+{
+  "name": "zero-video-factory",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "chrome:debug": "bash scripts/start-chrome-debug.sh",
+    "dev:web": "npm run build && node dist/web-demo/server.js",
+    "serve:web": "node dist/web-demo/server.js",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "playwright-core": "^1.52.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "@types/node": "^22.15.0",
+    "ts-node": "^10.9.2"
+  }
+}

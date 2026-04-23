@@ -1,0 +1,10 @@
+node_modules/
+dist/
+
+.env
+.env.*
+.codex
+
+npm
+tsc
+zero-video-factory@*

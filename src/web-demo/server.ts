@@ -1,0 +1,199 @@
+import { createServer } from "node:http";
+import { readFile } from "node:fs/promises";
+import { extname, join, normalize } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  ZeroTokenRuntime,
+  buildDefaultBrowserProfiles,
+  buildDefaultZeroTokenProviders,
+  type AuthProfile,
+  type ZeroTokenCapability,
+} from "../zero-token/index.js";
+
+const rootDir = fileURLToPath(new URL("../../", import.meta.url));
+const publicDir = join(rootDir, "src", "web-demo", "public");
+
+const providers = buildDefaultZeroTokenProviders();
+const browserProfiles = buildDefaultBrowserProfiles();
+
+function readAuthProfilesFromEnv(): AuthProfile[] {
+  const profiles: AuthProfile[] = [];
+  for (const provider of providers) {
+    if (!provider.authProfileId) {
+      continue;
+    }
+    const envPrefix = provider.providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_");
+    const cookie = process.env[`${envPrefix}_COOKIE`];
+    const userAgent = process.env[`${envPrefix}_USER_AGENT`];
+    if (cookie || userAgent) {
+      profiles.push({
+        authProfileId: provider.authProfileId,
+        providerId: provider.providerId,
+        authType: "cookie",
+        cookie,
+        userAgent,
+      });
+    }
+  }
+  return profiles;
+}
+
+function createRuntime() {
+  return new ZeroTokenRuntime({
+    providers,
+    browserProfiles,
+    authProfiles: readAuthProfilesFromEnv(),
+  });
+}
+
+function sendJson(res: any, status: number, value: unknown) {
+  const body = JSON.stringify(value, null, 2);
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": Buffer.byteLength(body),
+  });
+  res.end(body);
+}
+
+function readBody(req: any): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => {
+      const raw = Buffer.concat(chunks).toString("utf8");
+      if (!raw.trim()) {
+        resolve({});
+        return;
+      }
+      try {
+        resolve(JSON.parse(raw));
+      } catch (error) {
+        reject(error);
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+function summarizeProviders() {
+  return providers.map((provider) => ({
+    providerId: provider.providerId,
+    label: provider.label,
+    aliases: provider.aliases ?? [],
+    transportStrategy: provider.transportStrategy,
+    models: provider.models,
+    capabilities: provider.capabilities,
+  }));
+}
+
+async function handleApi(req: any, res: any, url: URL) {
+  if (req.method === "GET" && url.pathname === "/api/providers") {
+    sendJson(res, 200, {
+      providers: summarizeProviders(),
+      browserProfiles,
+      authProfilesFromEnv: readAuthProfilesFromEnv().map((profile) => ({
+        authProfileId: profile.authProfileId,
+        providerId: profile.providerId,
+        hasCookie: Boolean(profile.cookie),
+        hasUserAgent: Boolean(profile.userAgent),
+      })),
+    });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/generate") {
+    const body = (await readBody(req)) as {
+      providerRef?: string;
+      capability?: ZeroTokenCapability;
+      prompt?: string;
+      aspectRatio?: string;
+      resolution?: string;
+      count?: number;
+      transportPreference?: string[];
+    };
+    if (!body.providerRef || !body.capability || !body.prompt) {
+      sendJson(res, 400, {
+        error: "providerRef, capability and prompt are required",
+      });
+      return;
+    }
+    const runtime = createRuntime();
+    try {
+      const result = await runtime.generate({
+        requestId: `web_${Date.now()}`,
+        providerRef: body.providerRef,
+        capability: body.capability,
+        transportPreference: body.transportPreference as any,
+        input: {
+          prompt: body.prompt,
+          aspectRatio: body.aspectRatio || "16:9",
+          resolution: body.resolution || "2K",
+          count: body.count ?? 1,
+        },
+        runtimeOptions: {
+          browserProfileId: "chrome_main",
+          timeoutMs: 180000,
+          retryLimit: 1,
+          saveDebugArtifacts: false,
+        },
+      });
+      sendJson(res, 200, result);
+    } catch (error) {
+      sendJson(res, 500, {
+        error: error instanceof Error ? error.message : String(error),
+        name: error instanceof Error ? error.name : "Error",
+        details: error,
+      });
+    }
+    return;
+  }
+
+  sendJson(res, 404, { error: "API route not found" });
+}
+
+async function serveStatic(res: any, pathname: string) {
+  const requested = pathname === "/" ? "/index.html" : pathname;
+  const safePath = normalize(requested).replace(/^(\.\.[/\\])+/, "");
+  const filePath = join(publicDir, safePath);
+  const contentType =
+    extname(filePath) === ".html"
+      ? "text/html; charset=utf-8"
+      : extname(filePath) === ".css"
+        ? "text/css; charset=utf-8"
+        : extname(filePath) === ".js"
+          ? "text/javascript; charset=utf-8"
+          : "application/octet-stream";
+  try {
+    const body = await readFile(filePath);
+    res.writeHead(200, {
+      "Content-Type": contentType,
+      "Content-Length": body.length,
+    });
+    res.end(body);
+  } catch {
+    res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("Not found");
+  }
+}
+
+const port = Number(process.env.PORT ?? 4317);
+
+const server = createServer(async (req, res) => {
+  try {
+    const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+    if (url.pathname.startsWith("/api/")) {
+      await handleApi(req, res, url);
+      return;
+    }
+    await serveStatic(res, url.pathname);
+  } catch (error) {
+    sendJson(res, 500, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
+server.listen(port, "127.0.0.1", () => {
+  console.log(`ZeroToken web demo: http://127.0.0.1:${port}`);
+});
+
