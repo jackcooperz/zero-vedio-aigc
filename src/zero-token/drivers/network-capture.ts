@@ -2,7 +2,7 @@ import { ZeroTokenError } from "../errors.js";
 import type { BrowserSessionManager } from "../browser-session.js";
 import type { AuthProfile, ZeroTokenRequest, ZeroTokenResult, ZeroTokenTransport, WebProviderConfig } from "../types.js";
 import { parseProviderResponse } from "../providers/parsers.js";
-import { sendDomPrompt } from "./dom.js";
+import { getNetworkCaptureStartUrl, runNetworkCaptureTrigger } from "./network-triggers.js";
 
 export async function runNetworkCaptureDriver(params: {
   provider: WebProviderConfig;
@@ -25,7 +25,7 @@ export async function runNetworkCaptureDriver(params: {
 
   const session = await params.browser.connect(
     params.request.runtimeOptions?.browserProfileId ?? params.provider.browserProfileId,
-    params.provider.domDriver?.startUrl,
+    getNetworkCaptureStartUrl(params.provider, cfg.trigger),
   );
   try {
     const responsePromise = session.page.waitForResponse(
@@ -41,7 +41,7 @@ export async function runNetworkCaptureDriver(params: {
       { timeout: listener.timeoutMs },
     );
 
-    await sendDomPrompt({ provider: params.provider, request: params.request, session, auth: params.auth });
+    await runNetworkCaptureTrigger(cfg.trigger, { provider: params.provider, request: params.request, session, auth: params.auth });
     const response = await responsePromise;
     const raw = await response.text();
     const output = parseProviderResponse({

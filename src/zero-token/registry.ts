@@ -1,9 +1,18 @@
 import { ZeroTokenError } from "./errors.js";
-import type { ProviderRef, WebProviderConfig, ZeroTokenCapability } from "./types.js";
+import type { ProviderRef, WebProviderConfig } from "./types.js";
 
 export function parseProviderRef(raw: string): ProviderRef {
   const trimmed = raw.trim();
+  if (!trimmed) {
+    throw new ZeroTokenError("PROVIDER_NOT_FOUND", "Invalid provider_ref: empty");
+  }
   const slash = trimmed.indexOf("/");
+  if (slash < 0) {
+    return {
+      provider: trimmed,
+      model: "web",
+    };
+  }
   if (slash <= 0 || slash === trimmed.length - 1) {
     throw new ZeroTokenError("PROVIDER_NOT_FOUND", `Invalid provider_ref: ${raw}`);
   }
@@ -41,21 +50,4 @@ export class ProviderRegistry {
     }
     return provider;
   }
-
-  assertModel(provider: WebProviderConfig, model: string, capability: ZeroTokenCapability): void {
-    const capabilityConfig = provider.capabilities[capability];
-    if (!capabilityConfig?.enabled) {
-      throw new ZeroTokenError(
-        "CAPABILITY_NOT_SUPPORTED",
-        `${provider.providerId} does not support ${capability}`,
-      );
-    }
-    if (!capabilityConfig.models.includes(model)) {
-      throw new ZeroTokenError(
-        "MODEL_NOT_SUPPORTED",
-        `${provider.providerId} does not support model ${model} for ${capability}`,
-      );
-    }
-  }
 }
-

@@ -749,7 +749,7 @@ Orchestrator 是系统核心中枢。
 
 ### 7.1 设计背景
 
-为了节省 Token 与模型 API 成本，系统可以不直接调用官方付费 API，而是接入类似 `doubao-web`、`qwen-web` 的 Web 渠道。
+为了节省 Token 与模型 API 成本，系统可以不直接调用官方付费 API，而是接入类似 `doubao`、`qwen-web` 的 Web 渠道。
 
 这里需要强调：Web 渠道不是让业务流程重新变成 Agent，而是把“模型能力”抽象成一个可替换的 Provider。业务层仍然只看到统一协议：
 
@@ -773,7 +773,7 @@ image_generator.generate()
 推荐采用 `provider/model` 形式标识模型能力，类似：
 
 ```text
-doubao-web/seedream
+doubao/web
 qwen-web/wanxiang
 openai/gpt-image-1
 local/sd-xl
@@ -783,7 +783,7 @@ local/sd-xl
 
 ```json
 {
-  "provider_ref": "doubao-web/seedream",
+  "provider_ref": "doubao/web",
   "capability": "image_generation"
 }
 ```
@@ -794,8 +794,8 @@ local/sd-xl
 
 | Provider 类型 | 用途 | 示例 |
 | --- | --- | --- |
-| `storyboard_provider` | 生成 `storyboard.json` | `doubao-web/chat`, `qwen-web/chat`, `openai/gpt-5.4` |
-| `image_provider` | 生成 Scene 图片 | `doubao-web/seedream`, `qwen-web/wanxiang`, `local/sd-xl` |
+| `storyboard_provider` | 生成 `storyboard.json` | `doubao/web`, `qwen-web/chat`, `openai/gpt-5.4` |
+| `image_provider` | 生成 Scene 图片 | `doubao/web`, `qwen-web/wanxiang`, `local/sd-xl` |
 | `tts_provider` | 生成音频 | `edge-tts/zh-CN-XiaoyiNeural`, `volc-tts/*` |
 
 ### 7.4 Provider Registry 协议
@@ -806,20 +806,20 @@ Provider Registry 用于注册可用供应商、模型和能力。
 {
   "providers": [
     {
-      "provider_id": "doubao-web",
-      "label": "Doubao Web",
+      "provider_id": "doubao",
+      "label": "Doubao",
       "type": "web",
       "enabled": true,
-      "aliases": ["doubao"],
+      "aliases": ["doubao-web"],
       "auth_profile_id": "auth_doubao_main",
       "capabilities": {
         "storyboard_generation": {
           "enabled": true,
-          "models": ["chat"]
+          "models": ["web"]
         },
         "image_generation": {
           "enabled": true,
-          "models": ["seedream"],
+          "models": ["web"],
           "max_count": 4,
           "supports_aspect_ratio": true,
           "supports_resolution": true,
@@ -856,7 +856,7 @@ Web 渠道通常不使用 API Key，而是使用 Cookie、登录态、浏览器 
 ```json
 {
   "auth_profile_id": "auth_doubao_main",
-  "provider_id": "doubao-web",
+  "provider_id": "doubao",
   "auth_type": "browser_profile",
   "status": "ACTIVE",
   "storage": {
@@ -890,7 +890,7 @@ Web 渠道通常不使用 API Key，而是使用 Cookie、登录态、浏览器 
   "request_id": "req_storyboard_0001",
   "project_id": "pv_0001",
   "capability": "storyboard_generation",
-  "provider_ref": "doubao-web/chat",
+  "provider_ref": "doubao/web",
   "input": {
     "title": "小云朵的星星收集之旅",
     "story_text": "在很远很远的天空上...",
@@ -917,7 +917,7 @@ Web 渠道通常不使用 API Key，而是使用 Cookie、登录态、浏览器 
 {
   "request_id": "req_storyboard_0001",
   "project_id": "pv_0001",
-  "provider_ref": "doubao-web/chat",
+  "provider_ref": "doubao/web",
   "status": "success",
   "output": {
     "storyboard_json": {}
@@ -944,7 +944,7 @@ Web 渠道通常不使用 API Key，而是使用 Cookie、登录态、浏览器 
   "project_id": "pv_0001",
   "scene_id": "scene_001",
   "capability": "image_generation",
-  "provider_ref": "doubao-web/seedream",
+  "provider_ref": "doubao/web",
   "input": {
     "prompt": "a fluffy white cloud character named Mianmian...",
     "negative_prompt": "horror, violence, blurry, low quality",
@@ -974,7 +974,7 @@ Web 渠道通常不使用 API Key，而是使用 Cookie、登录态、浏览器 
   "request_id": "req_image_scene_001",
   "project_id": "pv_0001",
   "scene_id": "scene_001",
-  "provider_ref": "doubao-web/seedream",
+  "provider_ref": "doubao/web",
   "status": "success",
   "images": [
     {
@@ -1038,14 +1038,14 @@ interface ModelProviderAdapter {
 }
 ```
 
-`doubao-web` 与 `qwen-web` 的差异只存在于 Adapter 内部：
+`doubao` 与 `qwen-web` 的差异只存在于 Adapter 内部：
 
 ```text
 业务层
   ↓
 Provider Runtime
   ↓
-Provider Adapter: doubao-web / qwen-web / openai / local
+Provider Adapter: doubao / qwen-web / openai / local
   ↓
 具体执行：浏览器自动化 / HTTP API / 本地推理
 ```
@@ -1083,13 +1083,13 @@ prepare_browser_session
 
 ### 7.10 storyboard.json 中的 Provider 配置
 
-`storyboard.json` 不应该写死 `doubao-web` 的页面细节，只需要保存能力选择。
+`storyboard.json` 不应该写死 `doubao` 的页面细节，只需要保存能力选择。
 
 ```json
 {
   "model_profile": {
-    "storyboard_provider_ref": "doubao-web/chat",
-    "image_provider_ref": "doubao-web/seedream",
+    "storyboard_provider_ref": "doubao/web",
+    "image_provider_ref": "doubao/web",
     "tts_provider_ref": "edge-tts/zh-CN-XiaoyiNeural",
     "fallbacks": {
       "storyboard_generation": ["qwen-web/chat", "openai/gpt-5.4"],
@@ -1132,7 +1132,7 @@ ALTER TABLE scene_assets
 
 ### 7.12 设计结论
 
-这层协议的关键不是“绑定 doubao-web”，而是抽象出稳定的模型能力接口：
+这层协议的关键不是“绑定 doubao”，而是抽象出稳定的模型能力接口：
 
 ```text
 Provider Registry
@@ -1143,7 +1143,7 @@ Provider Registry
 + Normalized Result
 ```
 
-这样首版可以接 `doubao-web` 节省成本，后续也可以平滑切换到：
+这样首版可以接 `doubao` 节省成本，后续也可以平滑切换到：
 
 - `qwen-web`
 - 官方 API
@@ -1225,8 +1225,8 @@ Debug Chrome 方式需要把浏览器会话抽象出来，避免每个 Provider 
 
 ```json
 {
-  "provider_id": "doubao-web",
-  "label": "Doubao Web",
+  "provider_id": "doubao",
+  "label": "Doubao",
   "type": "web",
   "enabled": true,
   "auth_profile_id": "auth_doubao_main",
@@ -1240,11 +1240,11 @@ Debug Chrome 方式需要把浏览器会话抽象出来，避免每个 Provider 
   "capabilities": {
     "storyboard_generation": {
       "enabled": true,
-      "models": ["doubao-seed-2.0", "doubao-pro"]
+      "models": ["web"]
     },
     "image_generation": {
       "enabled": true,
-      "models": ["seedream-4.5"],
+      "models": ["web"],
       "max_count": 4,
       "supported_aspect_ratios": ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9"],
       "supported_resolutions": ["1K", "2K", "4K"]
@@ -1493,7 +1493,7 @@ load_auth_profile
 
 | Provider | 推荐主策略 | 能力 | 备注 |
 | --- | --- | --- | --- |
-| `doubao-web` | `browser_network_capture` | 文本、图片 | 图片可接 Seedream，支持多比例 |
+| `doubao` | `browser_network_capture` | 文本、图片 | Web 模型统一承载文本与图片能力，图片支持多比例 |
 | `qwen-web` | `browser_eval_fetch` | 文本 | 可降级 DOM |
 | `qwen-cn-web` | `browser_eval_fetch` | 文本 | 国内 Qwen 站点适配 |
 | `gemini-web` | `browser_dom` | 文本 | DOM 模拟输入与轮询回复 |
@@ -1509,7 +1509,7 @@ load_auth_profile
 
 视频生产系统首版建议只启用：
 
-- `doubao-web`：Storyboard + 图片
+- `doubao`：Storyboard + 图片
 - `qwen-web`：Storyboard fallback
 - `gemini-web`：Storyboard fallback
 - `glm-web`：Storyboard fallback
@@ -1525,7 +1525,7 @@ load_auth_profile
   "request_id": "req_zero_token_0001",
   "project_id": "pv_0001",
   "scene_id": "scene_001",
-  "provider_ref": "doubao-web/seedream-4.5",
+  "provider_ref": "doubao/web",
   "capability": "image_generation",
   "transport_preference": ["browser_network_capture", "browser_dom", "web_http_replay"],
   "input": {
@@ -1548,7 +1548,7 @@ load_auth_profile
 ```json
 {
   "request_id": "req_zero_token_0001",
-  "provider_ref": "doubao-web/seedream-4.5",
+  "provider_ref": "doubao/web",
   "transport_used": "browser_network_capture",
   "status": "success",
   "output": {

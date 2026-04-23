@@ -1,19 +1,13 @@
 # ZeroToken Provider Module
 
-统一封装 `doubao-web`、`qwen-web`、`gemini-web` 等 Web 模型能力，对外提供稳定的 Provider Runtime。
+统一封装 `doubao`、`qwen`、`gemini` 等 Web Provider，对外提供稳定的 Provider Runtime。
 
 ## 能力
 
-- 通过 `providerRef` 控制模型，例如 `doubao-web/seedream-4.5`
-- 支持文本生成、Storyboard 生成、图片生成三类能力
-- 支持多种 Web transport：
-  - `browser_dom`
-  - `browser_eval_fetch`
-  - `browser_network_capture`
-  - `web_http_replay`
-  - `hybrid`
+- 通过 `providerRef` 选择 Provider，例如 `doubao/web`
+- 所有 Provider 固定使用 `web` 模型
+- 统一使用 DOM 输入 + `browser_network_capture` 捕获结果
 - 支持 Debug Chrome / CDP 连接
-- 支持 provider fallback
 
 ## 快速使用
 
@@ -30,7 +24,7 @@ const runtime = new ZeroTokenRuntime({
   authProfiles: [
     {
       authProfileId: "auth_doubao_main",
-      providerId: "doubao-web",
+      providerId: "doubao",
       authType: "cookie",
       cookie: "sessionid=xxx; ttwid=yyy",
       userAgent: "Mozilla/5.0",
@@ -40,8 +34,8 @@ const runtime = new ZeroTokenRuntime({
 
 const result = await runtime.generate({
   requestId: "req_001",
-  providerRef: "doubao-web/seedream-4.5",
-  capability: "image_generation",
+  providerRef: "doubao/web",
+  capability: "text_generation",
   input: {
     prompt: "children storybook illustration, a cute cloud floating in the night sky",
     aspectRatio: "16:9",
@@ -58,7 +52,7 @@ console.log(result.output.images);
 ```ts
 const result = await runtime.generate({
   requestId: "req_storyboard_001",
-  providerRef: "qwen-web/qwen3.5-plus",
+  providerRef: "qwen/web",
   capability: "storyboard_generation",
   input: {
     prompt: "请将下面的儿童故事转换为严格 JSON storyboard...",
@@ -125,22 +119,20 @@ provider/model
 示例：
 
 ```text
-doubao-web/doubao-seed-2.0
-doubao-web/seedream-4.5
-qwen-web/qwen3.5-plus
-gemini-web/gemini-web
-glm-web/glm-web
+doubao/web
+qwen/web
+gemini/web
+glm/web
 ```
 
 ## 首版建议
 
 视频生产系统首版建议启用：
 
-- `doubao-web/seedream-4.5`：图片生成
-- `doubao-web/doubao-seed-2.0`：Storyboard 生成
-- `qwen-web/qwen3.5-plus`：Storyboard fallback
-- `gemini-web/gemini-web`：Storyboard fallback
-- `glm-web/glm-web`：Storyboard fallback
+- `doubao/web`：Storyboard + 图片生成
+- `qwen/web`：Storyboard fallback
+- `gemini/web`：Storyboard fallback
+- `glm/web`：Storyboard fallback
 
 ## Web Demo
 
@@ -159,8 +151,6 @@ http://127.0.0.1:4317
 页面提供：
 
 - Provider 列表
-- 模型选择
-- Capability 选择
 - Prompt 输入
 - 结果 JSON 预览
 - 图片结果预览

@@ -93,6 +93,13 @@ p,
   border-radius: 8px;
   padding: 10px;
   background: var(--panel);
+  text-align: left;
+  cursor: pointer;
+}
+
+.provider-item[data-active="true"] {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .provider-item strong {
@@ -235,4 +242,3 @@ pre {
     border-bottom: 1px solid var(--line);
   }
 }
-

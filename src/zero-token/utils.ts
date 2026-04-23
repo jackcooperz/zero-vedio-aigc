@@ -67,12 +67,18 @@ export function extractImageUrlsDeep(value: unknown): string[] {
   const addIfImageUrl = (raw: string) => {
     const normalized = raw
       .replace(/\\\//g, "/")
-      .replace(/\\u0026/gi, "&")
       .replace(/&amp;/g, "&")
       .replace(/[),.;\]}]+$/g, "");
     try {
       const url = new URL(normalized);
       const searchable = `${url.hostname}${url.pathname}${url.search}`.toLowerCase();
+      const looksLikeUiAsset =
+        /(?:^|[/_.-])(icon|logo|avatar|emoji|sticker|badge|thumb)(?:$|[/_.-])/i.test(searchable) ||
+        /filebiztype\.(?:biz_)?bot_icon/i.test(searchable) ||
+        /\/bot[_-]/i.test(url.pathname);
+      if (looksLikeUiAsset) {
+        return;
+      }
       if (
         /\.(png|jpe?g|webp|gif|heic|avif)(\?|$)/i.test(normalized) ||
         /(?:^|[?&])(format|mime_type|image_format)=(png|jpe?g|webp|gif|heic|avif)/i.test(url.search) ||
@@ -91,9 +97,7 @@ export function extractImageUrlsDeep(value: unknown): string[] {
     }
     if (typeof node === "string") {
       addIfImageUrl(node);
-      const normalized = node
-        .replace(/\\\//g, "/")
-        .replace(/\\u0026/gi, "&");
+      const normalized = node.replace(/\\\//g, "/");
       for (const match of normalized.matchAll(/https?:\/\/[^\s"'<>\\]+/g)) {
         addIfImageUrl(match[0]);
       }

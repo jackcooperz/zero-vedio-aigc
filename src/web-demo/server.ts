@@ -7,7 +7,6 @@ import {
   buildDefaultBrowserProfiles,
   buildDefaultZeroTokenProviders,
   type AuthProfile,
-  type ZeroTokenCapability,
 } from "../zero-token/index.js";
 
 const rootDir = fileURLToPath(new URL("../../", import.meta.url));
@@ -82,7 +81,6 @@ function summarizeProviders() {
     aliases: provider.aliases ?? [],
     transportStrategy: provider.transportStrategy,
     models: provider.models,
-    capabilities: provider.capabilities,
   }));
 }
 
@@ -104,16 +102,13 @@ async function handleApi(req: any, res: any, url: URL) {
   if (req.method === "POST" && url.pathname === "/api/generate") {
     const body = (await readBody(req)) as {
       providerRef?: string;
-      capability?: ZeroTokenCapability;
       prompt?: string;
-      aspectRatio?: string;
-      resolution?: string;
       count?: number;
       transportPreference?: string[];
     };
-    if (!body.providerRef || !body.capability || !body.prompt) {
+    if (!body.providerRef || !body.prompt) {
       sendJson(res, 400, {
-        error: "providerRef, capability and prompt are required",
+        error: "providerRef and prompt are required",
       });
       return;
     }
@@ -122,12 +117,10 @@ async function handleApi(req: any, res: any, url: URL) {
       const result = await runtime.generate({
         requestId: `web_${Date.now()}`,
         providerRef: body.providerRef,
-        capability: body.capability,
+        capability: "text_generation",
         transportPreference: body.transportPreference as any,
         input: {
           prompt: body.prompt,
-          aspectRatio: body.aspectRatio || "16:9",
-          resolution: body.resolution || "2K",
           count: body.count ?? 1,
         },
         runtimeOptions: {
@@ -193,7 +186,11 @@ const server = createServer(async (req, res) => {
   }
 });
 
+server.on("error", (error: NodeJS.ErrnoException) => {
+  console.error(`ZeroToken web demo failed to start on 127.0.0.1:${port}: ${error.message}`);
+  process.exitCode = 1;
+});
+
 server.listen(port, "127.0.0.1", () => {
   console.log(`ZeroToken web demo: http://127.0.0.1:${port}`);
 });
-

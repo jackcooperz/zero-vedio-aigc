@@ -1,9 +1,5 @@
 const providerList = document.querySelector("#providerList");
 const providerSelect = document.querySelector("#providerSelect");
-const modelSelect = document.querySelector("#modelSelect");
-const capabilitySelect = document.querySelector("#capabilitySelect");
-const aspectRatioSelect = document.querySelector("#aspectRatioSelect");
-const resolutionSelect = document.querySelector("#resolutionSelect");
 const promptInput = document.querySelector("#promptInput");
 const resultBox = document.querySelector("#resultBox");
 const imageGrid = document.querySelector("#imageGrid");
@@ -18,15 +14,21 @@ function activeProvider() {
   return providers.find((provider) => provider.providerId === providerSelect.value);
 }
 
-function activeModel() {
-  return activeProvider()?.models.find((model) => model.id === modelSelect.value);
-}
-
 function renderProviders() {
+  if (!providers.length) {
+    providerList.innerHTML = `<p class="empty">No providers available.</p>`;
+    providerSelect.innerHTML = "";
+    return;
+  }
+
+  if (!activeProvider()) {
+    providerSelect.value = providers[0].providerId;
+  }
+
   providerList.innerHTML = providers
     .map(
       (provider) => `
-        <button class="provider-item" type="button" data-provider="${provider.providerId}">
+        <button class="provider-item" type="button" data-provider="${provider.providerId}" data-active="${provider.providerId === providerSelect.value}">
           <strong>${provider.label}</strong>
           <span>${provider.providerId} · ${provider.transportStrategy.primary}</span>
         </button>
@@ -41,44 +43,52 @@ function renderProviders() {
   providerList.querySelectorAll("button").forEach((button) => {
     button.addEventListener("click", () => {
       providerSelect.value = button.dataset.provider;
-      renderModels();
+      renderProviderSelection();
     });
   });
 
-  renderModels();
+  renderProviderSelection();
 }
 
-function renderModels() {
-  const provider = activeProvider();
-  modelSelect.innerHTML = (provider?.models ?? [])
-    .map((model) => `<option value="${model.id}">${model.label ?? model.id}</option>`)
-    .join("");
-  renderCapabilities();
-}
-
-function renderCapabilities() {
-  const model = activeModel();
-  const caps = model?.capabilities ?? [];
-  capabilitySelect.innerHTML = caps
-    .map((capability) => `<option value="${capability}">${capability}</option>`)
-    .join("");
+function renderProviderSelection() {
+  providerList.querySelectorAll("button").forEach((button) => {
+    button.dataset.active = String(button.dataset.provider === providerSelect.value);
+  });
 }
 
 async function loadProviders() {
   statusText.textContent = "Loading providers...";
-  const res = await fetch("/api/providers");
-  const data = await res.json();
-  providers = data.providers;
-  renderProviders();
-  resultBox.textContent = JSON.stringify(data, null, 2);
-  imageGrid.innerHTML = `<p class="empty">Images returned by image providers will appear here.</p>`;
-  statusText.textContent = `${providers.length} providers available`;
+  try {
+    const res = await fetch("/api/providers");
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error ?? `Provider request failed with ${res.status}`);
+    }
+    if (!Array.isArray(data.providers)) {
+      throw new Error("Provider response missing providers array");
+    }
+    providers = data.providers;
+    renderProviders();
+    resultBox.textContent = JSON.stringify(data, null, 2);
+    imageGrid.innerHTML = `<p class="empty">Images returned by image providers will appear here.</p>`;
+    statusText.textContent = `${providers.length} providers available`;
+  } catch (error) {
+    providers = [];
+    renderProviders();
+    const message = error instanceof Error ? error.message : String(error);
+    resultBox.textContent = JSON.stringify({ error: message }, null, 2);
+    statusText.textContent = "Failed to load providers";
+  }
 }
 
 async function runGenerate(event) {
   event.preventDefault();
   const provider = activeProvider();
-  const providerRef = `${provider.providerId}/${modelSelect.value}`;
+  if (!provider) {
+    statusText.textContent = "No provider selected";
+    return;
+  }
+  const providerRef = `${provider.providerId}/web`;
 
   runBtn.disabled = true;
   statusText.textContent = `Running ${providerRef}...`;
@@ -90,10 +100,7 @@ async function runGenerate(event) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         providerRef,
-        capability: capabilitySelect.value,
         prompt: promptInput.value,
-        aspectRatio: aspectRatioSelect.value,
-        resolution: resolutionSelect.value,
         count: 1,
       }),
     });
@@ -125,8 +132,9 @@ async function runGenerate(event) {
   }
 }
 
-providerSelect.addEventListener("change", renderModels);
-modelSelect.addEventListener("change", renderCapabilities);
+providerSelect.addEventListener("change", () => {
+  renderProviderSelection();
+});
 refreshBtn.addEventListener("click", loadProviders);
 generateForm.addEventListener("submit", runGenerate);
 

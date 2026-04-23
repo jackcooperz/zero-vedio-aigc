@@ -1,9 +1,39 @@
+import type { ProviderResponseParserModule } from "../parsers.js";
+import { extractImageUrlsDeep, extractSseText } from "../../utils.js";
+
 export type DoubaoGeneratedImage = {
   url: string;
   key?: string;
   width?: number;
   height?: number;
 };
+
+export const doubaoSseParser = {
+  id: "doubao-sse",
+  parse(params) {
+    const doubaoImages = extractDoubaoGeneratedImagesFromSse(params.raw);
+    const fallbackImageUrls = doubaoImages.length > 0 ? [] : extractImageUrlsDeep(params.raw);
+    return {
+      text: extractDoubaoSseText(params.raw) || extractSseText(params.raw),
+      images: [
+        ...doubaoImages.map((image) => ({
+          url: image.url,
+          width: image.width,
+          height: image.height,
+          metadata: {
+            source: params.imageSource,
+            parser: "doubao-sse",
+            ...(image.key ? { key: image.key } : {}),
+          },
+        })),
+        ...fallbackImageUrls.map((url) => ({
+          url,
+          metadata: { source: params.imageSource, parser: "generic-url-scan" },
+        })),
+      ],
+    };
+  },
+} satisfies ProviderResponseParserModule;
 
 export function extractDoubaoSseText(raw: string): string {
   const chunks: string[] = [];
@@ -158,6 +188,9 @@ function addDoubaoGeneratedImage(
   if (!url) {
     return;
   }
+  if (isExcludedDoubaoImageUrl(url)) {
+    return;
+  }
   const key = typeof image.key === "string" ? image.key : url;
   if (images.has(key)) {
     return;
@@ -178,6 +211,15 @@ function addDoubaoGeneratedImage(
     ...(typeof width === "number" ? { width } : {}),
     ...(typeof height === "number" ? { height } : {}),
   });
+}
+
+function isExcludedDoubaoImageUrl(url: string): boolean {
+  const normalized = url.toLowerCase();
+  return (
+    /filebiztype\.(?:biz_)?bot_icon/.test(normalized) ||
+    /(?:^|[/_.-])(icon|logo|avatar|emoji|sticker|badge|thumb)(?:$|[/_.-])/.test(normalized) ||
+    /\/bot[_-]/.test(normalized)
+  );
 }
 
 function repairMojibakeText(text: string): string {

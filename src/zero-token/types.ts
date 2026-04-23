@@ -1,13 +1,8 @@
 export type ZeroTokenCapability = "storyboard_generation" | "image_generation" | "text_generation";
 
-export type ZeroTokenTransport =
-  | "browser_dom"
-  | "browser_eval_fetch"
-  | "browser_network_capture"
-  | "web_http_replay"
-  | "hybrid";
+export type ZeroTokenTransport = "browser_network_capture";
 
-export type ProviderResponseParser = "generic" | "doubao-web-sse";
+export type ProviderResponseParser = "generic" | "doubao-sse";
 
 export type ProviderRef = {
   provider: string;
@@ -44,15 +39,6 @@ export type TransportStrategy = {
 export type ProviderModel = {
   id: string;
   label?: string;
-  capabilities: ZeroTokenCapability[];
-};
-
-export type ProviderCapabilityConfig = {
-  enabled: boolean;
-  models: string[];
-  maxCount?: number;
-  supportedAspectRatios?: string[];
-  supportedResolutions?: string[];
 };
 
 export type DomAction =
@@ -81,25 +67,6 @@ export type DomDriverConfig = {
   }>;
 };
 
-export type EvalFetchStep = {
-  name: string;
-  method: "GET" | "POST";
-  url: string;
-  body?: unknown;
-};
-
-export type EvalFetchConfig = {
-  startUrl: string;
-  bootstrapSteps?: EvalFetchStep[];
-  sendMessage: {
-    method: "GET" | "POST";
-    urlTemplate: string;
-    bodyTemplate?: unknown;
-  };
-  responseMode: "json" | "text" | "stream";
-  outputPath?: string;
-};
-
 export type NetworkCaptureConfig = {
   trigger: "dom";
   parser?: ProviderResponseParser;
@@ -117,16 +84,6 @@ export type NetworkCaptureConfig = {
   }>;
 };
 
-export type HttpReplayConfig = {
-  baseUrl: string;
-  endpoint: string;
-  method: "GET" | "POST";
-  authSources?: Array<"cookie" | "user_agent" | "headers" | "query_params">;
-  dynamicParams?: string[];
-  responseMode: "json" | "text" | "sse";
-  parser?: ProviderResponseParser;
-};
-
 export type WebProviderConfig = {
   providerId: string;
   label: string;
@@ -137,11 +94,8 @@ export type WebProviderConfig = {
   browserProfileId?: string;
   transportStrategy: TransportStrategy;
   models: ProviderModel[];
-  capabilities: Partial<Record<ZeroTokenCapability, ProviderCapabilityConfig>>;
-  domDriver?: DomDriverConfig;
-  evalFetch?: EvalFetchConfig;
-  networkCapture?: NetworkCaptureConfig;
-  httpReplay?: HttpReplayConfig;
+  domDriver: DomDriverConfig;
+  networkCapture: NetworkCaptureConfig;
 };
 
 export type ZeroTokenRequest = {
@@ -149,7 +103,7 @@ export type ZeroTokenRequest = {
   projectId?: string;
   sceneId?: string;
   providerRef: string;
-  capability: ZeroTokenCapability;
+  capability?: ZeroTokenCapability;
   transportPreference?: ZeroTokenTransport[];
   input: {
     prompt?: string;

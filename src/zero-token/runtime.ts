@@ -1,8 +1,5 @@
 import { BrowserSessionManager } from "./browser-session.js";
-import { runDomDriver } from "./drivers/dom.js";
-import { runEvalFetchDriver } from "./drivers/eval-fetch.js";
-import { runHttpReplayDriver } from "./drivers/http-replay.js";
-import { runNetworkCaptureDriver } from "./drivers/network-capture.js";
+import { isConcreteTransport, runTransportDriver, type ConcreteZeroTokenTransport } from "./drivers/registry.js";
 import { ZeroTokenError } from "./errors.js";
 import { parseProviderRef, ProviderRegistry } from "./registry.js";
 import type {
@@ -31,7 +28,6 @@ export class ZeroTokenRuntime {
   async generate(request: ZeroTokenRequest): Promise<ZeroTokenResult> {
     const ref = parseProviderRef(request.providerRef);
     const provider = this.registry.resolve(ref.provider);
-    this.registry.assertModel(provider, ref.model, request.capability);
     const auth = provider.authProfileId
       ? this.authProfiles.find((profile) => profile.authProfileId === provider.authProfileId)
       : undefined;
@@ -40,21 +36,7 @@ export class ZeroTokenRuntime {
     let lastError: unknown;
     for (const transport of transports) {
       try {
-        if (transport === "browser_dom") {
-          return await runDomDriver({ provider, request, browser: this.browser, auth, transport });
-        }
-        if (transport === "browser_eval_fetch") {
-          return await runEvalFetchDriver({ provider, request, browser: this.browser, auth, transport });
-        }
-        if (transport === "browser_network_capture") {
-          return await runNetworkCaptureDriver({ provider, request, browser: this.browser, auth, transport });
-        }
-        if (transport === "web_http_replay") {
-          return await runHttpReplayDriver({ provider, request, auth, transport });
-        }
-        if (transport === "hybrid") {
-          continue;
-        }
+        return await runTransportDriver({ provider, request, browser: this.browser, auth, transport });
       } catch (error) {
         lastError = error;
         if (error instanceof ZeroTokenError && !error.retryable) {
@@ -72,10 +54,7 @@ export class ZeroTokenRuntime {
     primary: ZeroTokenTransport,
     fallbacks: ZeroTokenTransport[] = [],
     preference?: ZeroTokenTransport[],
-  ): Array<Exclude<ZeroTokenTransport, "hybrid">> {
-    const isConcreteTransport = (
-      item: ZeroTokenTransport,
-    ): item is Exclude<ZeroTokenTransport, "hybrid"> => item !== "hybrid";
+  ): ConcreteZeroTokenTransport[] {
     const configured = [primary, ...fallbacks].filter(isConcreteTransport);
     if (!preference?.length) {
       return configured;
