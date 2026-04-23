@@ -2,6 +2,14 @@ import { ZeroTokenError } from "../errors.js";
 import type { BrowserSessionManager } from "../browser-session.js";
 import type { AuthProfile, DomAction, DomDriverConfig, ZeroTokenRequest, ZeroTokenResult, ZeroTokenTransport, WebProviderConfig } from "../types.js";
 import { extractImageUrlsDeep, getPromptFromInput } from "../utils.js";
+import { resolveDomPromptSender, type DomSendPromptContext } from "./dom-senders.js";
+
+function matchesProviderPage(url: string, startUrl: string, pageUrlPatterns?: string[]): boolean {
+  if (pageUrlPatterns?.some((pattern) => url.includes(pattern))) {
+    return true;
+  }
+  return url.startsWith(startUrl);
+}
 
 async function runAction(page: any, action: DomAction): Promise<void> {
   if (action.type === "wait") {
@@ -12,17 +20,40 @@ async function runAction(page: any, action: DomAction): Promise<void> {
     await page.keyboard.press(action.key);
     return;
   }
-  const handle = await page.waitForSelector(action.selector, {
+  const locator = page.locator(action.selector).first();
+  const count = await locator.count().catch(() => 0);
+  if (count === 0) {
+    if (action.type === "click") {
+      throw new ZeroTokenError("DOM_SEND_FAILED", `Selector not found: ${action.selector}`, {
+        retryable: true,
+      });
+    }
+    return;
+  }
+  await locator.click({
     timeout: action.timeoutMs ?? 5000,
-    state: "visible",
-  }).catch(() => null);
-  if (!handle && action.type === "click") {
-    throw new ZeroTokenError("DOM_SEND_FAILED", `Selector not found: ${action.selector}`, {
+    force: action.force ?? false,
+  });
+}
+
+async function sendDefaultDomPrompt(context: DomSendPromptContext): Promise<void> {
+  let inputHandle: any = null;
+  for (const selector of context.provider.domDriver.inputSelectors) {
+    inputHandle = await context.session.page.$(selector);
+    if (inputHandle) {
+      break;
+    }
+  }
+  if (!inputHandle) {
+    throw new ZeroTokenError("DOM_INPUT_NOT_FOUND", "Could not find provider input box", {
       retryable: true,
     });
   }
-  if (handle) {
-    await handle.click();
+
+  await inputHandle.click();
+  await context.session.page.keyboard.type(getPromptFromInput(context.request.input), { delay: 15 });
+  for (const action of context.provider.domDriver.sendActions) {
+    await runAction(context.session.page, action);
   }
 }
 
@@ -106,7 +137,7 @@ export async function sendDomPrompt(params: {
     );
   }
 
-  if (!params.session.page.url().startsWith(cfg.startUrl)) {
+  if (!matchesProviderPage(params.session.page.url(), cfg.startUrl, cfg.pageUrlPatterns)) {
     await params.session.page.goto(cfg.startUrl, { waitUntil: "domcontentloaded" });
   }
 
@@ -114,24 +145,8 @@ export async function sendDomPrompt(params: {
     await runAction(params.session.page, action);
   }
 
-  let inputHandle: any = null;
-  for (const selector of cfg.inputSelectors) {
-    inputHandle = await params.session.page.$(selector);
-    if (inputHandle) {
-      break;
-    }
-  }
-  if (!inputHandle) {
-    throw new ZeroTokenError("DOM_INPUT_NOT_FOUND", "Could not find provider input box", {
-      retryable: true,
-    });
-  }
-
-  await inputHandle.click();
-  await params.session.page.keyboard.type(getPromptFromInput(params.request.input), { delay: 15 });
-  for (const action of cfg.sendActions) {
-    await runAction(params.session.page, action);
-  }
+  const sender = resolveDomPromptSender(params.provider.providerId) ?? sendDefaultDomPrompt;
+  await sender(params);
 }
 
 export async function runDomDriver(params: {
@@ -149,6 +164,7 @@ export async function runDomDriver(params: {
   const session = await params.browser.connect(
     params.request.runtimeOptions?.browserProfileId ?? params.provider.browserProfileId,
     cfg.startUrl,
+    cfg.pageUrlPatterns,
   );
   try {
     await sendDomPrompt({ provider: params.provider, request: params.request, session, auth: params.auth });

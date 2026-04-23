@@ -60,7 +60,7 @@ async function loadProviders() {
   statusText.textContent = "Loading providers...";
   try {
     const res = await fetch("/api/providers");
-    const data = await res.json();
+    const data = await readJsonResponse(res);
     if (!res.ok) {
       throw new Error(data.error ?? `Provider request failed with ${res.status}`);
     }
@@ -104,7 +104,7 @@ async function runGenerate(event) {
         count: 1,
       }),
     });
-    const data = await res.json();
+    const data = await readJsonResponse(res);
     resultBox.textContent = JSON.stringify(data, null, 2);
     const images = data.output?.images ?? [];
     imageGrid.innerHTML = "";
@@ -129,6 +129,20 @@ async function runGenerate(event) {
     statusText.textContent = "Request failed";
   } finally {
     runBtn.disabled = false;
+  }
+}
+
+async function readJsonResponse(res) {
+  const raw = await res.text();
+  if (!raw.trim()) {
+    throw new Error(`Empty response with status ${res.status}`);
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    throw new Error(
+      `Invalid JSON response with status ${res.status}: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 

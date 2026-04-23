@@ -46,12 +46,42 @@ function createRuntime() {
 }
 
 function sendJson(res: any, status: number, value: unknown) {
-  const body = JSON.stringify(value, null, 2);
+  const body = JSON.stringify(value, createJsonReplacer(), 2);
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": Buffer.byteLength(body),
   });
   res.end(body);
+}
+
+function createJsonReplacer() {
+  const seen = new WeakSet<object>();
+  return (_key: string, value: unknown) => {
+    if (value instanceof Error) {
+      const base = {
+        name: value.name,
+        message: value.message,
+        stack: value.stack,
+      } as Record<string, unknown>;
+      const errorRecord = value as unknown as Record<string, unknown>;
+      for (const key of Object.getOwnPropertyNames(value)) {
+        if (!(key in base)) {
+          base[key] = errorRecord[key];
+        }
+      }
+      return {
+        ...base,
+        ...(value instanceof AggregateError && value.errors ? { errors: value.errors } : {}),
+      };
+    }
+    if (typeof value === "object" && value !== null) {
+      if (seen.has(value)) {
+        return "[Circular]";
+      }
+      seen.add(value);
+    }
+    return value;
+  };
 }
 
 function readBody(req: any): Promise<unknown> {

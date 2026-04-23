@@ -2,7 +2,7 @@ export type ZeroTokenCapability = "storyboard_generation" | "image_generation" |
 
 export type ZeroTokenTransport = "browser_network_capture";
 
-export type ProviderResponseParser = "generic" | "doubao-sse";
+export type ProviderResponseParser = "generic" | "doubao-sse" | "qwen-sse";
 
 export type ProviderRef = {
   provider: string;
@@ -42,8 +42,8 @@ export type ProviderModel = {
 };
 
 export type DomAction =
-  | { type: "click_if_exists"; selector: string; timeoutMs?: number }
-  | { type: "click"; selector: string; timeoutMs?: number }
+  | { type: "click_if_exists"; selector: string; timeoutMs?: number; force?: boolean }
+  | { type: "click"; selector: string; timeoutMs?: number; force?: boolean }
   | { type: "keyboard"; key: string }
   | { type: "wait"; timeoutMs: number };
 

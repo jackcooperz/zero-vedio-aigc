@@ -1,6 +1,7 @@
 import type { GeneratedImage, ProviderResponseParser } from "../types.js";
 import { extractImageUrlsDeep, extractSseText } from "../utils.js";
 import { doubaoSseParser } from "./doubao/parser.js";
+import { qwenSseParser } from "./qwen/parser.js";
 
 export type ParsedProviderResponse = {
   text?: string;
@@ -26,7 +27,7 @@ const genericParser = {
 } satisfies ProviderResponseParserModule;
 
 const RESPONSE_PARSERS = Object.fromEntries(
-  [genericParser, doubaoSseParser].map((parser) => [parser.id, parser.parse]),
+  [genericParser, doubaoSseParser, qwenSseParser].map((parser) => [parser.id, parser.parse]),
 ) as Record<ProviderResponseParser, ProviderResponseParserModule["parse"]>;
 
 export function parseProviderResponse(params: ProviderResponseParserParams): ParsedProviderResponse {

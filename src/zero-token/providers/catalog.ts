@@ -58,6 +58,7 @@ function webProvider(config: {
   inputSelectors?: string[];
   pageUrlPatterns?: string[];
   preActions?: WebProviderConfig["domDriver"]["preActions"];
+  sendActions?: WebProviderConfig["domDriver"]["sendActions"];
   waitPolicy?: WebProviderConfig["domDriver"]["waitPolicy"];
   networkCapture: NetworkCaptureConfig;
   requiresVisibleBrowser?: boolean;
@@ -81,7 +82,7 @@ function webProvider(config: {
       pageUrlPatterns: config.pageUrlPatterns,
       inputSelectors: config.inputSelectors ?? commonTextInputSelectors,
       preActions: config.preActions,
-      sendActions: [{ type: "keyboard", key: "Enter" }],
+      sendActions: config.sendActions ?? [{ type: "keyboard", key: "Enter" }],
       waitPolicy: config.waitPolicy,
       outputExtractors: commonDomOutput,
     },
@@ -98,7 +99,7 @@ export function buildDefaultZeroTokenProviders(): WebProviderConfig[] {
       authProfileId: "auth_doubao_main",
       startUrl: "https://www.doubao.com/chat/",
       pageUrlPatterns: ["doubao.com/chat"],
-      inputSelectors: ["[contenteditable='true']", "textarea", "[role='textbox']"],
+      inputSelectors: ["textarea.semi-input-textarea", "[contenteditable='true']", "textarea", "[role='textbox']"],
       preActions: [{ type: "click_if_exists", selector: "[data-testid='text-mode']", timeoutMs: 3000 }],
       waitPolicy: {
         type: "stable_text",
@@ -118,7 +119,12 @@ export function buildDefaultZeroTokenProviders(): WebProviderConfig[] {
       aliases: ["qwen-web"],
       authProfileId: "auth_qwen_main",
       startUrl: "https://chat.qwen.ai/",
-      networkCapture: networkCapture("qwen_chat_completion", "chat.qwen.ai/api/v2/chat/completions"),
+      inputSelectors: ["textarea.message-input-textarea", ...commonTextInputSelectors],
+      sendActions: [{ type: "click", selector: "button.send-button", timeoutMs: 5000, force: true }],
+      networkCapture: networkCapture("qwen_chat_completion", "chat.qwen.ai/api/v2/chat/completions", {
+        parser: "qwen-sse",
+        contentTypeContains: "text/event-stream",
+      }),
     }),
     webProvider({
       providerId: "qwen-cn",

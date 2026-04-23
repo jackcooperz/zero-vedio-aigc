@@ -12,6 +12,33 @@ export type BrowserSession = {
   close: () => Promise<void>;
 };
 
+function matchesPageUrl(pageUrl: string, startUrl?: string, pageUrlPatterns?: string[]): boolean {
+  if (!pageUrl) {
+    return false;
+  }
+  if (pageUrlPatterns?.some((pattern) => pageUrl.includes(pattern))) {
+    return true;
+  }
+  if (!startUrl) {
+    return false;
+  }
+  try {
+    const currentUrl = new URL(pageUrl);
+    const targetUrl = new URL(startUrl);
+    return currentUrl.hostname === targetUrl.hostname;
+  } catch {
+    return pageUrl.startsWith(startUrl);
+  }
+}
+
+function pickExistingPage(
+  context: PlaywrightBrowserContext,
+  startUrl?: string,
+  pageUrlPatterns?: string[],
+): PlaywrightPage | undefined {
+  return context.pages().find((page: PlaywrightPage) => matchesPageUrl(page.url(), startUrl, pageUrlPatterns));
+}
+
 async function getChromeWebSocketUrl(cdpUrl: string, timeoutMs: number): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -52,7 +79,7 @@ export class BrowserSessionManager {
     return profile;
   }
 
-  async connect(profileId?: string, startUrl?: string): Promise<BrowserSession> {
+  async connect(profileId?: string, startUrl?: string, pageUrlPatterns?: string[]): Promise<BrowserSession> {
     const profile = this.resolveProfile(profileId);
     const { chromium } = await import("playwright-core");
 
@@ -76,8 +103,8 @@ export class BrowserSessionManager {
         headless: profile.headless ?? false,
       });
       const context = browser;
-      const page = context.pages()[0] ?? (await context.newPage());
-      if (startUrl) {
+      const page = pickExistingPage(context, startUrl, pageUrlPatterns) ?? context.pages()[0] ?? (await context.newPage());
+      if (startUrl && !matchesPageUrl(page.url(), startUrl, pageUrlPatterns)) {
         await page.goto(startUrl, { waitUntil: "domcontentloaded" });
       }
       return {
@@ -91,8 +118,8 @@ export class BrowserSessionManager {
     }
 
     const context = browser.contexts()[0] ?? (await browser.newContext());
-    const page = context.pages()[0] ?? (await context.newPage());
-    if (startUrl && !page.url().includes(new URL(startUrl).hostname)) {
+    const page = pickExistingPage(context, startUrl, pageUrlPatterns) ?? context.pages()[0] ?? (await context.newPage());
+    if (startUrl && !matchesPageUrl(page.url(), startUrl, pageUrlPatterns)) {
       await page.goto(startUrl, { waitUntil: "domcontentloaded" });
     }
     return {
@@ -105,4 +132,3 @@ export class BrowserSessionManager {
     };
   }
 }
-
