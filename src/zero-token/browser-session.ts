@@ -103,7 +103,7 @@ export class BrowserSessionManager {
         headless: profile.headless ?? false,
       });
       const context = browser;
-      const page = pickExistingPage(context, startUrl, pageUrlPatterns) ?? context.pages()[0] ?? (await context.newPage());
+      const page = pickExistingPage(context, startUrl, pageUrlPatterns) ?? (await context.newPage());
       if (startUrl && !matchesPageUrl(page.url(), startUrl, pageUrlPatterns)) {
         await page.goto(startUrl, { waitUntil: "domcontentloaded" });
       }
@@ -118,7 +118,7 @@ export class BrowserSessionManager {
     }
 
     const context = browser.contexts()[0] ?? (await browser.newContext());
-    const page = pickExistingPage(context, startUrl, pageUrlPatterns) ?? context.pages()[0] ?? (await context.newPage());
+    const page = pickExistingPage(context, startUrl, pageUrlPatterns) ?? (await context.newPage());
     if (startUrl && !matchesPageUrl(page.url(), startUrl, pageUrlPatterns)) {
       await page.goto(startUrl, { waitUntil: "domcontentloaded" });
     }
