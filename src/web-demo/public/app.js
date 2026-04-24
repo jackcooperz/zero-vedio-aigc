@@ -8,8 +8,10 @@ const statusText = document.querySelector("#statusText");
 const refreshBtn = document.querySelector("#refreshBtn");
 const generateForm = document.querySelector("#generateForm");
 const runBtn = document.querySelector("#runBtn");
+const selectedImagePreview = document.querySelector("#selectedImagePreview");
 
 let providers = [];
+let selectedImages = [];
 
 function activeProvider() {
   return providers.find((provider) => provider.providerId === providerSelect.value);
@@ -96,7 +98,7 @@ async function runGenerate(event) {
   imageGrid.innerHTML = `<p class="empty">Waiting for result...</p>`;
 
   try {
-    const inputImages = await readSelectedImages();
+    const inputImages = await Promise.all(selectedImages.map((item) => readFileAsPayload(item.file)));
     const res = await fetch("/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -135,9 +137,54 @@ async function runGenerate(event) {
   }
 }
 
-async function readSelectedImages() {
-  const files = Array.from(imageInput.files ?? []);
-  return Promise.all(files.map(readFileAsPayload));
+function addSelectedImages(files) {
+  for (const file of files) {
+    if (!file.type.startsWith("image/")) {
+      continue;
+    }
+    selectedImages.push({
+      id: `${file.name}:${file.size}:${file.lastModified}:${crypto.randomUUID?.() ?? Math.random()}`,
+      file,
+      previewUrl: URL.createObjectURL(file),
+    });
+  }
+  imageInput.value = "";
+  renderSelectedImages();
+}
+
+function removeSelectedImage(id) {
+  const image = selectedImages.find((item) => item.id === id);
+  if (image) {
+    URL.revokeObjectURL(image.previewUrl);
+  }
+  selectedImages = selectedImages.filter((item) => item.id !== id);
+  renderSelectedImages();
+}
+
+function renderSelectedImages() {
+  if (!selectedImages.length) {
+    selectedImagePreview.innerHTML = `<p class="empty">No reference images selected.</p>`;
+    return;
+  }
+  selectedImagePreview.innerHTML = "";
+  for (const image of selectedImages) {
+    const item = document.createElement("div");
+    item.className = "selected-image-item";
+
+    const img = document.createElement("img");
+    img.src = image.previewUrl;
+    img.alt = image.file.name;
+
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.className = "remove-image-btn";
+    removeButton.textContent = "×";
+    removeButton.setAttribute("aria-label", `Remove ${image.file.name}`);
+    removeButton.addEventListener("click", () => removeSelectedImage(image.id));
+
+    item.append(img, removeButton);
+    selectedImagePreview.appendChild(item);
+  }
 }
 
 async function readFileAsPayload(file) {
@@ -175,7 +222,11 @@ async function readJsonResponse(res) {
 providerSelect.addEventListener("change", () => {
   renderProviderSelection();
 });
+imageInput.addEventListener("change", () => {
+  addSelectedImages(Array.from(imageInput.files ?? []));
+});
 refreshBtn.addEventListener("click", loadProviders);
 generateForm.addEventListener("submit", runGenerate);
 
+renderSelectedImages();
 loadProviders();
