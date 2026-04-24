@@ -2,6 +2,7 @@ import { ZeroTokenError } from "../errors.js";
 import type { BrowserSessionManager } from "../browser-session.js";
 import type { AuthProfile, DomAction, DomDriverConfig, ZeroTokenRequest, ZeroTokenResult, ZeroTokenTransport, WebProviderConfig } from "../types.js";
 import { extractImageUrlsDeep, getPromptFromInput } from "../utils.js";
+import { pasteInputImages } from "./dom-attachments.js";
 import { resolveDomPromptSender, type DomSendPromptContext } from "./dom-senders.js";
 
 function matchesProviderPage(url: string, startUrl: string, pageUrlPatterns?: string[]): boolean {
@@ -51,6 +52,7 @@ async function sendDefaultDomPrompt(context: DomSendPromptContext): Promise<void
   }
 
   await inputHandle.click();
+  await pasteInputImages(context.session.page, context.request);
   await context.session.page.keyboard.type(getPromptFromInput(context.request.input), { delay: 15 });
   for (const action of context.provider.domDriver.sendActions) {
     await runAction(context.session.page, action);

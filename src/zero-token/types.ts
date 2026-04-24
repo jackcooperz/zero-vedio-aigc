@@ -108,6 +108,11 @@ export type ZeroTokenRequest = {
   input: {
     prompt?: string;
     messages?: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+    images?: Array<{
+      name?: string;
+      mimeType: string;
+      dataBase64: string;
+    }>;
     aspectRatio?: string;
     resolution?: string;
     count?: number;

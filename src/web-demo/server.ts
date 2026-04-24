@@ -133,6 +133,11 @@ async function handleApi(req: any, res: any, url: URL) {
     const body = (await readBody(req)) as {
       providerRef?: string;
       prompt?: string;
+      images?: Array<{
+        name?: string;
+        mimeType?: string;
+        dataBase64?: string;
+      }>;
       count?: number;
       transportPreference?: string[];
     };
@@ -151,6 +156,11 @@ async function handleApi(req: any, res: any, url: URL) {
         transportPreference: body.transportPreference as any,
         input: {
           prompt: body.prompt,
+          images: (body.images ?? []).filter((image) => image?.mimeType && image?.dataBase64).map((image) => ({
+            name: image.name,
+            mimeType: image.mimeType as string,
+            dataBase64: image.dataBase64 as string,
+          })),
           count: body.count ?? 1,
         },
         runtimeOptions: {

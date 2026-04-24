@@ -1,6 +1,7 @@
 const providerList = document.querySelector("#providerList");
 const providerSelect = document.querySelector("#providerSelect");
 const promptInput = document.querySelector("#promptInput");
+const imageInput = document.querySelector("#imageInput");
 const resultBox = document.querySelector("#resultBox");
 const imageGrid = document.querySelector("#imageGrid");
 const statusText = document.querySelector("#statusText");
@@ -95,12 +96,14 @@ async function runGenerate(event) {
   imageGrid.innerHTML = `<p class="empty">Waiting for result...</p>`;
 
   try {
+    const inputImages = await readSelectedImages();
     const res = await fetch("/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         providerRef,
         prompt: promptInput.value,
+        images: inputImages,
         count: 1,
       }),
     });
@@ -130,6 +133,29 @@ async function runGenerate(event) {
   } finally {
     runBtn.disabled = false;
   }
+}
+
+async function readSelectedImages() {
+  const files = Array.from(imageInput.files ?? []);
+  return Promise.all(files.map(readFileAsPayload));
+}
+
+async function readFileAsPayload(file) {
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(reader.error ?? new Error(`Failed to read ${file.name}`));
+    reader.readAsDataURL(file);
+  });
+  const match = /^data:([^;,]+);base64,(.*)$/.exec(dataUrl);
+  if (!match) {
+    throw new Error(`Unsupported image encoding for ${file.name}`);
+  }
+  return {
+    name: file.name,
+    mimeType: match[1],
+    dataBase64: match[2],
+  };
 }
 
 async function readJsonResponse(res) {

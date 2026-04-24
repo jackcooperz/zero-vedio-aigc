@@ -60,13 +60,17 @@ export function extractDoubaoGeneratedImagesFromSse(raw: string): DoubaoGenerate
   for (const payload of parseSseDataPayloads(raw)) {
     collectDoubaoGeneratedImages(payload, images);
   }
-  return [...images.values()];
+  const collected = [...images.values()];
+  const finalized = collected.filter(isFinalDoubaoGeneratedImage);
+  return finalized.length > 0 ? finalized : collected;
 }
 
 export function extractDoubaoGeneratedImagesFromValue(value: unknown): DoubaoGeneratedImage[] {
   const images = new Map<string, DoubaoGeneratedImage>();
   collectDoubaoGeneratedImages(value, images);
-  return [...images.values()];
+  const collected = [...images.values()];
+  const finalized = collected.filter(isFinalDoubaoGeneratedImage);
+  return finalized.length > 0 ? finalized : collected;
 }
 
 function parseSseEvents(raw: string): Array<{ event: string; data: string }> {
@@ -220,6 +224,11 @@ function isExcludedDoubaoImageUrl(url: string): boolean {
     /(?:^|[/_.-])(icon|logo|avatar|emoji|sticker|badge|thumb)(?:$|[/_.-])/.test(normalized) ||
     /\/bot[_-]/.test(normalized)
   );
+}
+
+function isFinalDoubaoGeneratedImage(image: DoubaoGeneratedImage): boolean {
+  const searchable = `${image.key ?? ""} ${image.url}`.toLowerCase();
+  return /(?:^|[/_\s-])rc_gen_image(?:$|[/_\s-])/.test(searchable);
 }
 
 function repairMojibakeText(text: string): string {

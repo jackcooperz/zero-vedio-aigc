@@ -1,5 +1,6 @@
 import { ZeroTokenError } from "../../errors.js";
 import { getPromptFromInput } from "../../utils.js";
+import { pasteInputImages } from "../dom-attachments.js";
 import type { DomSendPromptContext } from "../dom-senders.js";
 
 function isDisabled(value: unknown): boolean {
@@ -17,6 +18,7 @@ export async function sendDoubaoDomPrompt(context: DomSendPromptContext): Promis
   }
 
   await input.click({ timeout: 5000 });
+  await pasteInputImages(session.page, request);
   await session.page.keyboard.type(getPromptFromInput(request.input), { delay: 15 });
 
   const sendButton = session.page.locator(
