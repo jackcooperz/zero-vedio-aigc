@@ -1,0 +1,3008 @@
+package main
+
+import (
+	"bytes"
+	"encoding/binary"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"html"
+	"io"
+	"log"
+	"math"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+	"unicode/utf8"
+)
+
+type app struct {
+	rootDir          string
+	projectsDir      string
+	zeroTokenCLIPath string
+}
+
+type createProjectRequest struct {
+	Title       string `json:"title"`
+	Story       string `json:"story"`
+	ProviderRef string `json:"provider_ref"`
+}
+
+type generateStoryboardRequest struct {
+	ProviderRef      string `json:"provider_ref"`
+	BrowserProfileID string `json:"browser_profile_id"`
+	TimeoutMs        int    `json:"timeout_ms"`
+}
+
+type generateSceneImageRequest struct {
+	ProviderRef      string `json:"provider_ref"`
+	BrowserProfileID string `json:"browser_profile_id"`
+	TimeoutMs        int    `json:"timeout_ms"`
+	Force            bool   `json:"force"`
+}
+
+type generateSceneAudioRequest struct {
+	ProviderRef  string `json:"provider_ref"`
+	VoiceName    string `json:"voice_name"`
+	SpeakingRate string `json:"speaking_rate"`
+	Pitch        string `json:"pitch"`
+	Force        bool   `json:"force"`
+}
+
+type composeSceneVideoRequest struct {
+	Width  int  `json:"width"`
+	Height int  `json:"height"`
+	Force  bool `json:"force"`
+}
+
+type composeFinalVideoRequest struct {
+	Width                int  `json:"width"`
+	Height               int  `json:"height"`
+	FPS                  int  `json:"fps"`
+	TransitionDurationMs int  `json:"transition_duration_ms"`
+	Force                bool `json:"force"`
+}
+
+type projectFile struct {
+	ProjectID                string `json:"project_id"`
+	Title                    string `json:"title"`
+	Story                    string `json:"story"`
+	ProviderRef              string `json:"provider_ref"`
+	Status                   string `json:"status"`
+	StoryboardPath           string `json:"storyboard_path,omitempty"`
+	StoryboardValid          bool   `json:"storyboard_valid,omitempty"`
+	StoryboardValidationPath string `json:"storyboard_validation_path,omitempty"`
+	StoryboardGeneratedAt    string `json:"storyboard_generated_at,omitempty"`
+	SceneCount               int    `json:"scene_count,omitempty"`
+	FinalVideoStatus         string `json:"final_video_status,omitempty"`
+	FinalVideoLocalPath      string `json:"final_video_local_path,omitempty"`
+	FinalVideoPreviewURL     string `json:"final_video_preview_url,omitempty"`
+	FinalVideoMimeType       string `json:"final_video_mime_type,omitempty"`
+	FinalVideoDurationMs     int    `json:"final_video_duration_ms,omitempty"`
+	FinalVideoError          string `json:"final_video_error,omitempty"`
+	FinalVideoGeneratedAt    string `json:"final_video_generated_at,omitempty"`
+	CreatedAt                string `json:"created_at"`
+	UpdatedAt                string `json:"updated_at"`
+}
+
+type taskFile struct {
+	TaskID     string `json:"task_id"`
+	Kind       string `json:"kind"`
+	SceneID    string `json:"scene_id,omitempty"`
+	Status     string `json:"status"`
+	Message    string `json:"message,omitempty"`
+	Error      string `json:"error,omitempty"`
+	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
+	FinishedAt string `json:"finished_at,omitempty"`
+}
+
+type projectDetailResponse struct {
+	Project              projectFile                 `json:"project"`
+	Storyboard           json.RawMessage             `json:"storyboard,omitempty"`
+	StoryboardValidation *storyboardValidationResult `json:"storyboard_validation,omitempty"`
+	Scenes               []sceneFile                 `json:"scenes,omitempty"`
+	Tasks                []taskFile                  `json:"tasks"`
+	Files                map[string]string           `json:"files"`
+}
+
+type bridgeResponse struct {
+	OK     bool              `json:"ok"`
+	Result zeroTokenGenerate `json:"result"`
+	Error  string            `json:"error"`
+	Name   string            `json:"name"`
+}
+
+type zeroTokenGenerate struct {
+	RequestID string                  `json:"requestId"`
+	Output    zeroTokenGenerateOutput `json:"output"`
+}
+
+type zeroTokenGenerateOutput struct {
+	Text   string                    `json:"text"`
+	JSON   json.RawMessage           `json:"json"`
+	Images []zeroTokenGeneratedImage `json:"images"`
+}
+
+type zeroTokenGeneratedImage struct {
+	URL       string `json:"url"`
+	LocalPath string `json:"localPath,omitempty"`
+	MimeType  string `json:"mimeType,omitempty"`
+}
+
+type storyboardValidationResult struct {
+	Valid       bool     `json:"valid"`
+	Errors      []string `json:"errors"`
+	SceneCount  int      `json:"scene_count,omitempty"`
+	ValidatedAt string   `json:"validated_at,omitempty"`
+}
+
+type sceneFile struct {
+	ProjectID            string         `json:"project_id"`
+	SceneID              string         `json:"scene_id"`
+	Sequence             int            `json:"sequence"`
+	Title                string         `json:"title"`
+	StoryFunction        string         `json:"story_function"`
+	Narration            string         `json:"narration"`
+	Subtitle             string         `json:"subtitle"`
+	DurationHintSec      int            `json:"duration_hint_sec"`
+	Characters           []string       `json:"characters"`
+	Objects              []string       `json:"objects"`
+	Environment          map[string]any `json:"environment"`
+	Visual               map[string]any `json:"visual"`
+	Prompt               map[string]any `json:"prompt"`
+	Audio                map[string]any `json:"audio"`
+	Effects              map[string]any `json:"effects"`
+	Status               string         `json:"status"`
+	ImageStatus          string         `json:"image_status"`
+	ImageProviderRef     string         `json:"image_provider_ref,omitempty"`
+	ImagePrompt          string         `json:"image_prompt,omitempty"`
+	ImageURL             string         `json:"image_url,omitempty"`
+	ImageLocalPath       string         `json:"image_local_path,omitempty"`
+	ImagePreviewURL      string         `json:"image_preview_url,omitempty"`
+	ImageMimeType        string         `json:"image_mime_type,omitempty"`
+	ImageError           string         `json:"image_error,omitempty"`
+	ImageGeneratedAt     string         `json:"image_generated_at,omitempty"`
+	AudioStatus          string         `json:"audio_status"`
+	AudioProviderRef     string         `json:"audio_provider_ref,omitempty"`
+	VoiceName            string         `json:"voice_name,omitempty"`
+	SpeakingRate         string         `json:"speaking_rate,omitempty"`
+	Pitch                string         `json:"pitch,omitempty"`
+	AudioLocalPath       string         `json:"audio_local_path,omitempty"`
+	AudioPreviewURL      string         `json:"audio_preview_url,omitempty"`
+	AudioMimeType        string         `json:"audio_mime_type,omitempty"`
+	AudioDurationMs      int            `json:"audio_duration_ms,omitempty"`
+	AudioError           string         `json:"audio_error,omitempty"`
+	AudioGeneratedAt     string         `json:"audio_generated_at,omitempty"`
+	SubtitleLocalPath    string         `json:"subtitle_local_path,omitempty"`
+	SubtitlePreviewURL   string         `json:"subtitle_preview_url,omitempty"`
+	ComposeStatus        string         `json:"compose_status"`
+	ComposeMode          string         `json:"compose_mode,omitempty"`
+	SceneVideoLocalPath  string         `json:"scene_video_local_path,omitempty"`
+	SceneVideoPreviewURL string         `json:"scene_video_preview_url,omitempty"`
+	SceneVideoMimeType   string         `json:"scene_video_mime_type,omitempty"`
+	SceneDurationMs      int            `json:"scene_duration_ms,omitempty"`
+	ComposeError         string         `json:"compose_error,omitempty"`
+	ComposedAt           string         `json:"composed_at,omitempty"`
+	CreatedAt            string         `json:"created_at"`
+	UpdatedAt            string         `json:"updated_at"`
+}
+
+type storyboardValidationError struct {
+	Errors []string
+}
+
+func (e *storyboardValidationError) Error() string {
+	return "storyboard validation failed: " + strings.Join(e.Errors, "; ")
+}
+
+func main() {
+	rootDir, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("resolve working directory: %v", err)
+	}
+
+	server := &app{
+		rootDir:          rootDir,
+		projectsDir:      filepath.Join(rootDir, "projects"),
+		zeroTokenCLIPath: filepath.Join(rootDir, "dist", "zero-token", "bridge-cli.js"),
+	}
+
+	if err := os.MkdirAll(server.projectsDir, 0o755); err != nil {
+		log.Fatalf("create projects dir: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", server.handleHome)
+	mux.HandleFunc("/healthz", server.handleHealthz)
+	mux.HandleFunc("/api/projects", server.handleProjects)
+	mux.HandleFunc("/api/projects/", server.handleProjectRoutes)
+	mux.Handle("/local/projects/", http.StripPrefix("/local/projects/", http.FileServer(http.Dir(server.projectsDir))))
+
+	port := envOrDefault("PORT", "4388")
+	log.Printf("story video server listening on http://127.0.0.1:%s", port)
+	log.Fatal(http.ListenAndServe("127.0.0.1:"+port, mux))
+}
+
+func (a *app) handleHealthz(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":               true,
+		"projects_dir":     a.projectsDir,
+		"zero_token_cli":   a.zeroTokenCLIPath,
+		"zero_token_built": fileExists(a.zeroTokenCLIPath),
+		"edge_tts":         lookupCommand("edge-tts"),
+		"ffmpeg":           lookupCommand("ffmpeg"),
+		"ffprobe":          lookupCommand("ffprobe"),
+	})
+}
+
+func (a *app) handleHome(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		writeError(w, http.StatusNotFound, errors.New("page not found"))
+		return
+	}
+
+	writeHTML(w, http.StatusOK, buildHomeHTML(a.projectsDir, fileExists(a.zeroTokenCLIPath)))
+}
+
+func (a *app) handleProjects(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		projects, err := a.listProjects()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"projects": projects})
+	case http.MethodPost:
+		var req createProjectRequest
+		if err := decodeJSONBody(r.Body, &req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		if strings.TrimSpace(req.Title) == "" || strings.TrimSpace(req.Story) == "" {
+			writeError(w, http.StatusBadRequest, errors.New("title and story are required"))
+			return
+		}
+		project, err := a.createProject(req)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"project": project})
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (a *app) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/projects/")
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) == 0 || parts[0] == "" {
+		writeError(w, http.StatusNotFound, errors.New("project route not found"))
+		return
+	}
+
+	projectID := parts[0]
+	if len(parts) == 1 {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		detail, err := a.getProjectDetail(projectID)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, os.ErrNotExist) {
+				status = http.StatusNotFound
+			}
+			writeError(w, status, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, detail)
+		return
+	}
+
+	if len(parts) == 2 && parts[1] == "storyboard" {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var req generateStoryboardRequest
+		if err := decodeJSONBody(r.Body, &req); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		detail, err := a.generateStoryboard(projectID, req)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, os.ErrNotExist) {
+				status = http.StatusNotFound
+			}
+			var validationErr *storyboardValidationError
+			if errors.As(err, &validationErr) {
+				status = http.StatusUnprocessableEntity
+			}
+			writeError(w, status, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, detail)
+		return
+	}
+
+	if len(parts) == 2 && parts[1] == "scenes" {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		scenes, err := a.listScenes(projectID)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, os.ErrNotExist) {
+				status = http.StatusNotFound
+			}
+			writeError(w, status, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"project_id": projectID,
+			"scenes":     scenes,
+		})
+		return
+	}
+
+	if len(parts) == 2 && parts[1] == "assets" {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		assets, err := a.getProjectAssets(projectID)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, os.ErrNotExist) {
+				status = http.StatusNotFound
+			}
+			writeError(w, status, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, assets)
+		return
+	}
+
+	if len(parts) == 2 && parts[1] == "final-video" {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var req composeFinalVideoRequest
+		if err := decodeJSONBody(r.Body, &req); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		project, err := a.composeFinalVideo(projectID, req)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, os.ErrNotExist) {
+				status = http.StatusNotFound
+			}
+			writeError(w, status, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"project": project})
+		return
+	}
+
+	if len(parts) == 3 && parts[1] == "scenes" {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		scene, err := a.getSceneDetail(projectID, parts[2])
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, os.ErrNotExist) {
+				status = http.StatusNotFound
+			}
+			writeError(w, status, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, scene)
+		return
+	}
+
+	if len(parts) == 4 && parts[1] == "scenes" && parts[3] == "image" {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var req generateSceneImageRequest
+		if err := decodeJSONBody(r.Body, &req); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		scene, err := a.generateSceneImage(projectID, parts[2], req)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, os.ErrNotExist) {
+				status = http.StatusNotFound
+			}
+			writeError(w, status, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, scene)
+		return
+	}
+
+	if len(parts) == 4 && parts[1] == "scenes" && parts[3] == "audio" {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var req generateSceneAudioRequest
+		if err := decodeJSONBody(r.Body, &req); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		scene, err := a.generateSceneAudio(projectID, parts[2], req)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, os.ErrNotExist) {
+				status = http.StatusNotFound
+			}
+			writeError(w, status, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, scene)
+		return
+	}
+
+	if len(parts) == 4 && parts[1] == "scenes" && parts[3] == "video" {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var req composeSceneVideoRequest
+		if err := decodeJSONBody(r.Body, &req); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		scene, err := a.composeSceneVideo(projectID, parts[2], req)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, os.ErrNotExist) {
+				status = http.StatusNotFound
+			}
+			writeError(w, status, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, scene)
+		return
+	}
+
+	writeError(w, http.StatusNotFound, errors.New("project route not found"))
+}
+
+func (a *app) createProject(req createProjectRequest) (projectFile, error) {
+	projectID := fmt.Sprintf("pv_%d", time.Now().UnixMilli())
+	now := time.Now().UTC().Format(time.RFC3339)
+	project := projectFile{
+		ProjectID:   projectID,
+		Title:       strings.TrimSpace(req.Title),
+		Story:       strings.TrimSpace(req.Story),
+		ProviderRef: defaultProviderRef(req.ProviderRef),
+		Status:      "created",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+
+	projectDir := filepath.Join(a.projectsDir, projectID)
+	if err := os.MkdirAll(filepath.Join(projectDir, "scenes"), 0o755); err != nil {
+		return projectFile{}, err
+	}
+	if err := os.MkdirAll(filepath.Join(projectDir, "assets", "images"), 0o755); err != nil {
+		return projectFile{}, err
+	}
+	if err := os.MkdirAll(filepath.Join(projectDir, "assets", "audio"), 0o755); err != nil {
+		return projectFile{}, err
+	}
+	if err := os.MkdirAll(filepath.Join(projectDir, "assets", "subtitles"), 0o755); err != nil {
+		return projectFile{}, err
+	}
+	if err := os.MkdirAll(filepath.Join(projectDir, "assets", "scene_videos"), 0o755); err != nil {
+		return projectFile{}, err
+	}
+	if err := os.MkdirAll(filepath.Join(projectDir, "final"), 0o755); err != nil {
+		return projectFile{}, err
+	}
+	if err := writeJSONFile(filepath.Join(projectDir, "project.json"), project); err != nil {
+		return projectFile{}, err
+	}
+	if err := writeJSONFile(filepath.Join(projectDir, "tasks.json"), []taskFile{}); err != nil {
+		return projectFile{}, err
+	}
+	if err := a.resetSceneFiles(projectID); err != nil {
+		return projectFile{}, err
+	}
+
+	return project, nil
+}
+
+func (a *app) listProjects() ([]projectFile, error) {
+	entries, err := os.ReadDir(a.projectsDir)
+	if err != nil {
+		return nil, err
+	}
+
+	projects := make([]projectFile, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		project, err := a.readProject(entry.Name())
+		if err != nil {
+			continue
+		}
+		projects = append(projects, project)
+	}
+	return projects, nil
+}
+
+func (a *app) getProjectDetail(projectID string) (projectDetailResponse, error) {
+	project, err := a.readProject(projectID)
+	if err != nil {
+		return projectDetailResponse{}, err
+	}
+	tasks, err := a.readTasks(projectID)
+	if err != nil {
+		return projectDetailResponse{}, err
+	}
+
+	files := map[string]string{
+		"project": filepath.Join(a.projectsDir, projectID, "project.json"),
+		"tasks":   filepath.Join(a.projectsDir, projectID, "tasks.json"),
+	}
+
+	var storyboard json.RawMessage
+	var validation *storyboardValidationResult
+	scenes, err := a.readSceneFiles(projectID)
+	if err != nil {
+		return projectDetailResponse{}, err
+	}
+	if project.StoryboardPath != "" && fileExists(project.StoryboardPath) {
+		raw, err := os.ReadFile(project.StoryboardPath)
+		if err != nil {
+			return projectDetailResponse{}, err
+		}
+		storyboard = json.RawMessage(raw)
+		files["storyboard"] = project.StoryboardPath
+	}
+	if project.StoryboardValidationPath != "" && fileExists(project.StoryboardValidationPath) {
+		result, err := a.readStoryboardValidation(projectID)
+		if err != nil {
+			return projectDetailResponse{}, err
+		}
+		validation = &result
+		files["storyboard_validation"] = project.StoryboardValidationPath
+	}
+	if len(scenes) > 0 {
+		files["scenes_index"] = a.sceneIndexPath(projectID)
+	}
+	if project.FinalVideoLocalPath != "" {
+		files["final_video"] = project.FinalVideoLocalPath
+	}
+
+	return projectDetailResponse{
+		Project:              project,
+		Storyboard:           storyboard,
+		StoryboardValidation: validation,
+		Scenes:               scenes,
+		Tasks:                tasks,
+		Files:                files,
+	}, nil
+}
+
+func (a *app) generateStoryboard(projectID string, req generateStoryboardRequest) (projectDetailResponse, error) {
+	project, err := a.readProject(projectID)
+	if err != nil {
+		return projectDetailResponse{}, err
+	}
+
+	tasks, err := a.readTasks(projectID)
+	if err != nil {
+		return projectDetailResponse{}, err
+	}
+	tasks = pruneDerivedTasks(tasks)
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	task := newTask("storyboard_generation", "", "running", "Calling local zero-token bridge CLI", now)
+	tasks = append(tasks, task)
+	if writeErr := a.writeTasks(projectID, tasks); writeErr != nil {
+		return projectDetailResponse{}, writeErr
+	}
+
+	project.Status = "storyboard_generating"
+	project.UpdatedAt = now
+	if writeErr := a.writeProject(project); writeErr != nil {
+		return projectDetailResponse{}, writeErr
+	}
+
+	storyboardJSON, err := a.runZeroTokenStoryboard(project, req)
+	if err != nil {
+		tasks[len(tasks)-1].Status = "failed"
+		tasks[len(tasks)-1].Error = err.Error()
+		tasks[len(tasks)-1].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		tasks[len(tasks)-1].FinishedAt = tasks[len(tasks)-1].UpdatedAt
+		_ = a.writeTasks(projectID, tasks)
+
+		project.Status = "storyboard_failed"
+		project.UpdatedAt = tasks[len(tasks)-1].UpdatedAt
+		_ = a.writeProject(project)
+		return projectDetailResponse{}, err
+	}
+
+	storyboardPath := filepath.Join(a.projectsDir, projectID, "storyboard.json")
+	if writeErr := writeRawJSONFile(storyboardPath, storyboardJSON); writeErr != nil {
+		return projectDetailResponse{}, writeErr
+	}
+
+	finishedAt := time.Now().UTC().Format(time.RFC3339)
+	project.StoryboardPath = storyboardPath
+	project.StoryboardGeneratedAt = finishedAt
+	project.StoryboardValidationPath = a.storyboardValidationPath(projectID)
+	project.UpdatedAt = finishedAt
+
+	validation, scenes := validateStoryboard(storyboardJSON, projectID, finishedAt)
+	if writeErr := a.writeStoryboardValidation(projectID, validation); writeErr != nil {
+		return projectDetailResponse{}, writeErr
+	}
+	tasks[len(tasks)-1].Status = "success"
+	tasks[len(tasks)-1].UpdatedAt = finishedAt
+	tasks[len(tasks)-1].FinishedAt = finishedAt
+
+	if !validation.Valid {
+		tasks[len(tasks)-1].Message = "Storyboard saved, but validation failed"
+		tasks = append(tasks, newTask("storyboard_validation", "", "failed", "Storyboard validation failed", finishedAt))
+		tasks[len(tasks)-1].Error = strings.Join(validation.Errors, "; ")
+		tasks[len(tasks)-1].FinishedAt = finishedAt
+		if resetErr := a.resetSceneFiles(projectID); resetErr != nil {
+			return projectDetailResponse{}, resetErr
+		}
+		project.Status = "storyboard_invalid"
+		project.StoryboardValid = false
+		project.SceneCount = validation.SceneCount
+		project.UpdatedAt = finishedAt
+		if writeErr := a.writeProject(project); writeErr != nil {
+			return projectDetailResponse{}, writeErr
+		}
+		if writeErr := a.writeTasks(projectID, tasks); writeErr != nil {
+			return projectDetailResponse{}, writeErr
+		}
+		return projectDetailResponse{}, &storyboardValidationError{Errors: validation.Errors}
+	}
+
+	sceneTasks, err := a.writeScenePlan(projectID, scenes, finishedAt)
+	if err != nil {
+		return projectDetailResponse{}, err
+	}
+
+	tasks[len(tasks)-1].Message = "Storyboard saved and validated"
+	tasks = append(tasks, newTask("storyboard_validation", "", "success", fmt.Sprintf("Storyboard validation passed with %d scenes", len(scenes)), finishedAt))
+	tasks[len(tasks)-1].FinishedAt = finishedAt
+	tasks = append(tasks, newTask("scene_task_split", "", "success", fmt.Sprintf("Generated %d scene tasks", len(sceneTasks)), finishedAt))
+	tasks[len(tasks)-1].FinishedAt = finishedAt
+	tasks = append(tasks, sceneTasks...)
+
+	project.Status = "scene_tasks_ready"
+	project.StoryboardValid = true
+	project.SceneCount = len(scenes)
+	project.UpdatedAt = finishedAt
+	if err := a.writeProject(project); err != nil {
+		return projectDetailResponse{}, err
+	}
+	if err := a.writeTasks(projectID, tasks); err != nil {
+		return projectDetailResponse{}, err
+	}
+
+	return a.getProjectDetail(projectID)
+}
+
+func (a *app) runZeroTokenStoryboard(project projectFile, req generateStoryboardRequest) ([]byte, error) {
+	if !fileExists(a.zeroTokenCLIPath) {
+		return nil, fmt.Errorf("zero-token bridge CLI not found at %s; run npm run build first", a.zeroTokenCLIPath)
+	}
+
+	providerRef := defaultProviderRef(req.ProviderRef)
+	timeoutMs := req.TimeoutMs
+	if timeoutMs <= 0 {
+		timeoutMs = 300000
+	}
+	browserProfileID := req.BrowserProfileID
+	if browserProfileID == "" {
+		browserProfileID = "chrome_main"
+	}
+
+	payload := map[string]any{
+		"requestId":   fmt.Sprintf("storyboard_%d", time.Now().UnixMilli()),
+		"providerRef": providerRef,
+		"capability":  "text_image",
+		"input": map[string]any{
+			"prompt": buildStoryboardPrompt(project),
+		},
+		"runtimeOptions": map[string]any{
+			"browserProfileId":   browserProfileID,
+			"timeoutMs":          timeoutMs,
+			"retryLimit":         1,
+			"saveDebugArtifacts": false,
+		},
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := exec.Command("node", a.zeroTokenCLIPath, "generate")
+	cmd.Dir = a.rootDir
+	cmd.Stdin = bytes.NewReader(body)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("zero-token bridge failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+
+	var resp bridgeResponse
+	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
+		return nil, fmt.Errorf("decode zero-token response: %w", err)
+	}
+	if !resp.OK {
+		return nil, fmt.Errorf("zero-token bridge error: %s %s", resp.Name, resp.Error)
+	}
+
+	if len(resp.Result.Output.JSON) > 0 && string(resp.Result.Output.JSON) != "null" {
+		return normalizeJSON(resp.Result.Output.JSON)
+	}
+	return extractJSONObject(resp.Result.Output.Text)
+}
+
+func (a *app) readProject(projectID string) (projectFile, error) {
+	var project projectFile
+	err := readJSONFile(filepath.Join(a.projectsDir, projectID, "project.json"), &project)
+	return project, err
+}
+
+func (a *app) writeProject(project projectFile) error {
+	return writeJSONFile(filepath.Join(a.projectsDir, project.ProjectID, "project.json"), project)
+}
+
+func (a *app) readTasks(projectID string) ([]taskFile, error) {
+	var tasks []taskFile
+	err := readJSONFile(filepath.Join(a.projectsDir, projectID, "tasks.json"), &tasks)
+	return tasks, err
+}
+
+func (a *app) writeTasks(projectID string, tasks []taskFile) error {
+	return writeJSONFile(filepath.Join(a.projectsDir, projectID, "tasks.json"), tasks)
+}
+
+func (a *app) storyboardValidationPath(projectID string) string {
+	return filepath.Join(a.projectsDir, projectID, "storyboard.validation.json")
+}
+
+func (a *app) sceneIndexPath(projectID string) string {
+	return filepath.Join(a.projectsDir, projectID, "scenes", "index.json")
+}
+
+func (a *app) readStoryboardValidation(projectID string) (storyboardValidationResult, error) {
+	var result storyboardValidationResult
+	path := a.storyboardValidationPath(projectID)
+	if !fileExists(path) {
+		return result, nil
+	}
+	err := readJSONFile(path, &result)
+	return result, err
+}
+
+func (a *app) writeStoryboardValidation(projectID string, result storyboardValidationResult) error {
+	return writeJSONFile(a.storyboardValidationPath(projectID), result)
+}
+
+func (a *app) readSceneFiles(projectID string) ([]sceneFile, error) {
+	var scenes []sceneFile
+	path := a.sceneIndexPath(projectID)
+	if !fileExists(path) {
+		return []sceneFile{}, nil
+	}
+	if err := readJSONFile(path, &scenes); err != nil {
+		return nil, err
+	}
+	return scenes, nil
+}
+
+func (a *app) listScenes(projectID string) ([]sceneFile, error) {
+	if _, err := a.readProject(projectID); err != nil {
+		return nil, err
+	}
+	return a.readSceneFiles(projectID)
+}
+
+func (a *app) scenePath(projectID string, sceneID string) string {
+	return filepath.Join(a.projectsDir, projectID, "scenes", sceneID+".json")
+}
+
+func (a *app) readSceneFile(projectID string, sceneID string) (sceneFile, error) {
+	var scene sceneFile
+	err := readJSONFile(a.scenePath(projectID, sceneID), &scene)
+	return scene, err
+}
+
+func (a *app) writeSceneFile(projectID string, scene sceneFile) error {
+	if err := writeJSONFile(a.scenePath(projectID, scene.SceneID), scene); err != nil {
+		return err
+	}
+	scenes, err := a.readSceneFiles(projectID)
+	if err != nil {
+		return err
+	}
+	updated := false
+	for index := range scenes {
+		if scenes[index].SceneID == scene.SceneID {
+			scenes[index] = scene
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		scenes = append(scenes, scene)
+	}
+	return writeJSONFile(a.sceneIndexPath(projectID), scenes)
+}
+
+func (a *app) getSceneDetail(projectID string, sceneID string) (sceneFile, error) {
+	if _, err := a.readProject(projectID); err != nil {
+		return sceneFile{}, err
+	}
+	return a.readSceneFile(projectID, sceneID)
+}
+
+func (a *app) resetSceneFiles(projectID string) error {
+	sceneDir := filepath.Join(a.projectsDir, projectID, "scenes")
+	if err := os.MkdirAll(sceneDir, 0o755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(sceneDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if err := os.RemoveAll(filepath.Join(sceneDir, entry.Name())); err != nil {
+			return err
+		}
+	}
+	return writeJSONFile(a.sceneIndexPath(projectID), []sceneFile{})
+}
+
+func (a *app) writeScenePlan(projectID string, scenes []sceneFile, now string) ([]taskFile, error) {
+	if err := a.resetSceneFiles(projectID); err != nil {
+		return nil, err
+	}
+
+	sceneDir := filepath.Join(a.projectsDir, projectID, "scenes")
+	tasks := make([]taskFile, 0, len(scenes)*3)
+	for _, scene := range scenes {
+		path := filepath.Join(sceneDir, scene.SceneID+".json")
+		if err := writeJSONFile(path, scene); err != nil {
+			return nil, err
+		}
+		tasks = append(tasks,
+			newTask("scene_image_generation", scene.SceneID, "pending", "Scene image generation queued", now),
+			newTask("scene_audio_generation", scene.SceneID, "pending", "Scene audio generation queued", now),
+			newTask("scene_video_compositing", scene.SceneID, "pending", "Scene video compositing queued", now),
+		)
+	}
+	if err := writeJSONFile(a.sceneIndexPath(projectID), scenes); err != nil {
+		return nil, err
+	}
+	return tasks, nil
+}
+
+func (a *app) generateSceneImage(projectID string, sceneID string, req generateSceneImageRequest) (sceneFile, error) {
+	project, err := a.readProject(projectID)
+	if err != nil {
+		return sceneFile{}, err
+	}
+	if !project.StoryboardValid || project.StoryboardPath == "" {
+		return sceneFile{}, errors.New("storyboard is not ready or not valid")
+	}
+
+	scene, err := a.readSceneFile(projectID, sceneID)
+	if err != nil {
+		return sceneFile{}, err
+	}
+	if scene.ImageStatus == "success" && !req.Force {
+		return scene, nil
+	}
+
+	tasks, err := a.readTasks(projectID)
+	if err != nil {
+		return sceneFile{}, err
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	scene.Status = "image_generating"
+	scene.ImageStatus = "running"
+	scene.ImageError = ""
+	scene.UpdatedAt = now
+	if writeErr := a.writeSceneFile(projectID, scene); writeErr != nil {
+		return sceneFile{}, writeErr
+	}
+	tasks = upsertTask(tasks, newTask("scene_image_generation", sceneID, "running", "Generating scene image", now))
+	if writeErr := a.writeTasks(projectID, tasks); writeErr != nil {
+		return sceneFile{}, writeErr
+	}
+
+	storyboardRoot, err := a.readStoryboardRoot(project)
+	if err != nil {
+		return sceneFile{}, err
+	}
+	prompt := buildSceneImagePrompt(storyboardRoot, scene)
+	image, err := a.runZeroTokenSceneImage(project, scene, req, prompt, resolveSceneAspectRatio(storyboardRoot))
+	if err != nil {
+		failedAt := time.Now().UTC().Format(time.RFC3339)
+		scene.Status = "scene_tasks_ready"
+		scene.ImageStatus = "failed"
+		scene.ImageError = err.Error()
+		scene.UpdatedAt = failedAt
+		_ = a.writeSceneFile(projectID, scene)
+		tasks = updateTaskStatus(tasks, "scene_image_generation", sceneID, "failed", "Scene image generation failed", err.Error(), failedAt)
+		_ = a.writeTasks(projectID, tasks)
+		return sceneFile{}, err
+	}
+
+	localPath, previewURL, mimeType, err := a.persistGeneratedImage(projectID, sceneID, image)
+	if err != nil {
+		failedAt := time.Now().UTC().Format(time.RFC3339)
+		scene.Status = "scene_tasks_ready"
+		scene.ImageStatus = "failed"
+		scene.ImageError = err.Error()
+		scene.UpdatedAt = failedAt
+		_ = a.writeSceneFile(projectID, scene)
+		tasks = updateTaskStatus(tasks, "scene_image_generation", sceneID, "failed", "Scene image download failed", err.Error(), failedAt)
+		_ = a.writeTasks(projectID, tasks)
+		return sceneFile{}, err
+	}
+
+	finishedAt := time.Now().UTC().Format(time.RFC3339)
+	scene.Status = "image_ready"
+	scene.ImageStatus = "success"
+	scene.ImageProviderRef = resolveImageProviderRef(project.ProviderRef, req.ProviderRef)
+	scene.ImagePrompt = prompt
+	scene.ImageURL = image.URL
+	scene.ImageLocalPath = localPath
+	scene.ImagePreviewURL = previewURL
+	scene.ImageMimeType = mimeType
+	scene.ImageGeneratedAt = finishedAt
+	scene.ImageError = ""
+	scene.UpdatedAt = finishedAt
+	if err := a.writeSceneFile(projectID, scene); err != nil {
+		return sceneFile{}, err
+	}
+
+	tasks = updateTaskStatus(tasks, "scene_image_generation", sceneID, "success", "Scene image generated", "", finishedAt)
+	if err := a.writeTasks(projectID, tasks); err != nil {
+		return sceneFile{}, err
+	}
+
+	project.Status = "image_partial_ready"
+	project.UpdatedAt = finishedAt
+	if err := a.writeProject(project); err != nil {
+		return sceneFile{}, err
+	}
+
+	return scene, nil
+}
+
+func (a *app) generateSceneAudio(projectID string, sceneID string, req generateSceneAudioRequest) (sceneFile, error) {
+	project, err := a.readProject(projectID)
+	if err != nil {
+		return sceneFile{}, err
+	}
+	if !project.StoryboardValid || project.StoryboardPath == "" {
+		return sceneFile{}, errors.New("storyboard is not ready or not valid")
+	}
+
+	scene, err := a.readSceneFile(projectID, sceneID)
+	if err != nil {
+		return sceneFile{}, err
+	}
+	if scene.AudioStatus == "success" && !req.Force {
+		return scene, nil
+	}
+
+	tasks, err := a.readTasks(projectID)
+	if err != nil {
+		return sceneFile{}, err
+	}
+	storyboardRoot, err := a.readStoryboardRoot(project)
+	if err != nil {
+		return sceneFile{}, err
+	}
+
+	providerRef := resolveAudioProviderRef(storyboardRoot, req.ProviderRef)
+	if shouldUseEdgeTTS(providerRef) && lookupCommand("edge-tts") == "" {
+		providerRef = "builtin/mock-tts"
+	}
+	voiceName, speakingRate, pitch := resolveSceneVoiceSettings(storyboardRoot, scene, req)
+	durationMs := estimateSpeechDurationMs(scene.Narration, scene.DurationHintSec, speakingRate)
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	scene.Status = "audio_generating"
+	scene.AudioStatus = "running"
+	scene.AudioProviderRef = providerRef
+	scene.VoiceName = voiceName
+	scene.SpeakingRate = speakingRate
+	scene.Pitch = pitch
+	scene.AudioError = ""
+	scene.UpdatedAt = now
+	if writeErr := a.writeSceneFile(projectID, scene); writeErr != nil {
+		return sceneFile{}, writeErr
+	}
+	tasks = upsertTask(tasks, newTask("scene_audio_generation", sceneID, "running", "Generating scene audio", now))
+	if writeErr := a.writeTasks(projectID, tasks); writeErr != nil {
+		return sceneFile{}, writeErr
+	}
+
+	audioPath := filepath.Join(a.projectsDir, projectID, "assets", "audio", sceneID+".wav")
+	subtitlePath := filepath.Join(a.projectsDir, projectID, "assets", "subtitles", sceneID+".srt")
+	audioExt := ".wav"
+	audioMimeType := "audio/wav"
+	if shouldUseEdgeTTS(providerRef) {
+		audioExt = ".mp3"
+		audioMimeType = "audio/mpeg"
+		audioPath = filepath.Join(a.projectsDir, projectID, "assets", "audio", sceneID+audioExt)
+	}
+	if err := os.MkdirAll(filepath.Dir(audioPath), 0o755); err != nil {
+		return sceneFile{}, err
+	}
+	if err := os.MkdirAll(filepath.Dir(subtitlePath), 0o755); err != nil {
+		return sceneFile{}, err
+	}
+	if err := a.generateSceneAudioMedia(audioPath, subtitlePath, scene, providerRef, voiceName, speakingRate, pitch, durationMs); err != nil {
+		failedAt := time.Now().UTC().Format(time.RFC3339)
+		scene.Status = deriveSceneStatus(scene.ImageStatus, "failed", scene.ComposeStatus)
+		scene.AudioStatus = "failed"
+		scene.AudioError = err.Error()
+		scene.UpdatedAt = failedAt
+		_ = a.writeSceneFile(projectID, scene)
+		tasks = updateTaskStatus(tasks, "scene_audio_generation", sceneID, "failed", "Scene audio generation failed", err.Error(), failedAt)
+		_ = a.writeTasks(projectID, tasks)
+		return sceneFile{}, err
+	}
+	if !fileExists(subtitlePath) {
+		if err := writeSceneSubtitleFile(subtitlePath, preferredSubtitleText(scene), durationMs); err != nil {
+			failedAt := time.Now().UTC().Format(time.RFC3339)
+			scene.Status = deriveSceneStatus(scene.ImageStatus, "failed", scene.ComposeStatus)
+			scene.AudioStatus = "failed"
+			scene.AudioError = err.Error()
+			scene.UpdatedAt = failedAt
+			_ = a.writeSceneFile(projectID, scene)
+			tasks = updateTaskStatus(tasks, "scene_audio_generation", sceneID, "failed", "Scene subtitle generation failed", err.Error(), failedAt)
+			_ = a.writeTasks(projectID, tasks)
+			return sceneFile{}, err
+		}
+	}
+	if probedDurationMs := probeMediaDurationMs(audioPath); probedDurationMs > 0 {
+		durationMs = probedDurationMs
+	}
+	finishedAt := time.Now().UTC().Format(time.RFC3339)
+	scene.Status = deriveSceneStatus(scene.ImageStatus, "success", scene.ComposeStatus)
+	scene.AudioStatus = "success"
+	scene.AudioLocalPath = audioPath
+	scene.AudioPreviewURL = a.projectStaticURL(projectID, filepath.Join("assets", "audio", sceneID+audioExt))
+	scene.AudioMimeType = audioMimeType
+	scene.AudioDurationMs = durationMs
+	scene.AudioError = ""
+	scene.AudioGeneratedAt = finishedAt
+	scene.SubtitleLocalPath = subtitlePath
+	scene.SubtitlePreviewURL = a.projectStaticURL(projectID, filepath.Join("assets", "subtitles", sceneID+".srt"))
+	scene.SceneDurationMs = maxInt(scene.SceneDurationMs, durationMs)
+	scene.UpdatedAt = finishedAt
+	if err := a.writeSceneFile(projectID, scene); err != nil {
+		return sceneFile{}, err
+	}
+
+	tasks = updateTaskStatus(tasks, "scene_audio_generation", sceneID, "success", "Scene audio generated", "", finishedAt)
+	if err := a.writeTasks(projectID, tasks); err != nil {
+		return sceneFile{}, err
+	}
+
+	project.Status = "audio_partial_ready"
+	project.UpdatedAt = finishedAt
+	if err := a.writeProject(project); err != nil {
+		return sceneFile{}, err
+	}
+	return scene, nil
+}
+
+func (a *app) composeSceneVideo(projectID string, sceneID string, req composeSceneVideoRequest) (sceneFile, error) {
+	project, err := a.readProject(projectID)
+	if err != nil {
+		return sceneFile{}, err
+	}
+	scene, err := a.readSceneFile(projectID, sceneID)
+	if err != nil {
+		return sceneFile{}, err
+	}
+	if (scene.ComposeStatus == "success" || scene.ComposeStatus == "preview_ready") && !req.Force {
+		return scene, nil
+	}
+	if scene.ImageLocalPath == "" || !fileExists(scene.ImageLocalPath) {
+		return sceneFile{}, errors.New("scene image is not ready")
+	}
+	if scene.AudioLocalPath == "" || !fileExists(scene.AudioLocalPath) {
+		return sceneFile{}, errors.New("scene audio is not ready")
+	}
+
+	tasks, err := a.readTasks(projectID)
+	if err != nil {
+		return sceneFile{}, err
+	}
+	storyboardRoot, err := a.readStoryboardRoot(project)
+	if err != nil {
+		return sceneFile{}, err
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	scene.Status = "video_compositing"
+	scene.ComposeStatus = "running"
+	scene.ComposeError = ""
+	scene.UpdatedAt = now
+	if writeErr := a.writeSceneFile(projectID, scene); writeErr != nil {
+		return sceneFile{}, writeErr
+	}
+	tasks = upsertTask(tasks, newTask("scene_video_compositing", sceneID, "running", "Compositing scene video", now))
+	if writeErr := a.writeTasks(projectID, tasks); writeErr != nil {
+		return sceneFile{}, writeErr
+	}
+
+	width, height := resolveVideoDimensions(resolveSceneAspectRatio(storyboardRoot), req.Width, req.Height)
+	targetDir := filepath.Join(a.projectsDir, projectID, "assets", "scene_videos")
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		return sceneFile{}, err
+	}
+
+	var localPath string
+	var previewURL string
+	var mimeType string
+	var composeMode string
+	var composeStatus string
+	ffmpegPath, ffmpegErr := exec.LookPath("ffmpeg")
+	if ffmpegErr == nil {
+		localPath = filepath.Join(targetDir, sceneID+".mp4")
+		if err := runFFmpegSceneCompose(ffmpegPath, scene, localPath, width, height, resolveSceneFPS(storyboardRoot), buildSubtitleForceStyle(storyboardRoot)); err != nil {
+			failedAt := time.Now().UTC().Format(time.RFC3339)
+			scene.Status = deriveSceneStatus(scene.ImageStatus, scene.AudioStatus, "failed")
+			scene.ComposeStatus = "failed"
+			scene.ComposeError = err.Error()
+			scene.UpdatedAt = failedAt
+			_ = a.writeSceneFile(projectID, scene)
+			tasks = updateTaskStatus(tasks, "scene_video_compositing", sceneID, "failed", "Scene video compositing failed", err.Error(), failedAt)
+			_ = a.writeTasks(projectID, tasks)
+			return sceneFile{}, err
+		}
+		previewURL = a.projectStaticURL(projectID, filepath.Join("assets", "scene_videos", sceneID+".mp4"))
+		mimeType = "video/mp4"
+		composeMode = "ffmpeg_mp4"
+		composeStatus = "success"
+	} else {
+		localPath = filepath.Join(targetDir, sceneID+".html")
+		if err := writeScenePreviewHTML(localPath, projectID, scene); err != nil {
+			failedAt := time.Now().UTC().Format(time.RFC3339)
+			scene.Status = deriveSceneStatus(scene.ImageStatus, scene.AudioStatus, "failed")
+			scene.ComposeStatus = "failed"
+			scene.ComposeError = err.Error()
+			scene.UpdatedAt = failedAt
+			_ = a.writeSceneFile(projectID, scene)
+			tasks = updateTaskStatus(tasks, "scene_video_compositing", sceneID, "failed", "Scene preview generation failed", err.Error(), failedAt)
+			_ = a.writeTasks(projectID, tasks)
+			return sceneFile{}, err
+		}
+		previewURL = a.projectStaticURL(projectID, filepath.Join("assets", "scene_videos", sceneID+".html"))
+		mimeType = "text/html"
+		composeMode = "html_preview_fallback"
+		composeStatus = "preview_ready"
+	}
+
+	finishedAt := time.Now().UTC().Format(time.RFC3339)
+	if mimeType == "video/mp4" {
+		if probedDurationMs := probeMediaDurationMs(localPath); probedDurationMs > 0 {
+			scene.SceneDurationMs = maxInt(scene.SceneDurationMs, probedDurationMs)
+		}
+	}
+	scene.Status = deriveSceneStatus(scene.ImageStatus, scene.AudioStatus, composeStatus)
+	scene.ComposeStatus = composeStatus
+	scene.ComposeMode = composeMode
+	scene.SceneVideoLocalPath = localPath
+	scene.SceneVideoPreviewURL = previewURL
+	scene.SceneVideoMimeType = mimeType
+	scene.SceneDurationMs = maxInt(scene.SceneDurationMs, scene.AudioDurationMs)
+	scene.ComposeError = ""
+	scene.ComposedAt = finishedAt
+	scene.UpdatedAt = finishedAt
+	if err := a.writeSceneFile(projectID, scene); err != nil {
+		return sceneFile{}, err
+	}
+
+	successMessage := "Scene video composed"
+	if composeMode == "html_preview_fallback" {
+		successMessage = "Scene preview generated without ffmpeg"
+	}
+	tasks = updateTaskStatus(tasks, "scene_video_compositing", sceneID, "success", successMessage, "", finishedAt)
+	if err := a.writeTasks(projectID, tasks); err != nil {
+		return sceneFile{}, err
+	}
+
+	project.Status = "video_partial_ready"
+	if composeStatus == "preview_ready" {
+		project.Status = "video_preview_partial_ready"
+	}
+	project.UpdatedAt = finishedAt
+	if err := a.writeProject(project); err != nil {
+		return sceneFile{}, err
+	}
+	return scene, nil
+}
+
+func (a *app) composeFinalVideo(projectID string, req composeFinalVideoRequest) (projectFile, error) {
+	project, err := a.readProject(projectID)
+	if err != nil {
+		return projectFile{}, err
+	}
+	if project.FinalVideoStatus == "success" && !req.Force {
+		return project, nil
+	}
+	scenes, err := a.readSceneFiles(projectID)
+	if err != nil {
+		return projectFile{}, err
+	}
+	if len(scenes) == 0 {
+		return projectFile{}, errors.New("no scenes found")
+	}
+	ffmpegPath := lookupCommand("ffmpeg")
+
+	for _, scene := range scenes {
+		if ffmpegPath != "" {
+			if !isSceneVideoReadyForFinalCompose(scene) {
+				return projectFile{}, fmt.Errorf("scene video is not ready for final mp4 compose: %s (status=%s mode=%s)", scene.SceneID, scene.ComposeStatus, scene.ComposeMode)
+			}
+			continue
+		}
+		if !isSceneVideoPreviewReady(scene) {
+			return projectFile{}, fmt.Errorf("scene video is not ready: %s", scene.SceneID)
+		}
+	}
+
+	tasks, err := a.readTasks(projectID)
+	if err != nil {
+		return projectFile{}, err
+	}
+	storyboardRoot, err := a.readStoryboardRoot(project)
+	if err != nil {
+		return projectFile{}, err
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	project.Status = "final_video_compositing"
+	project.FinalVideoStatus = "running"
+	project.FinalVideoError = ""
+	project.UpdatedAt = now
+	if err := a.writeProject(project); err != nil {
+		return projectFile{}, err
+	}
+	tasks = upsertTask(tasks, newTask("final_video_compositing", "", "running", "Compositing final video", now))
+	if err := a.writeTasks(projectID, tasks); err != nil {
+		return projectFile{}, err
+	}
+
+	finalDir := filepath.Join(a.projectsDir, projectID, "final")
+	if err := os.MkdirAll(finalDir, 0o755); err != nil {
+		return projectFile{}, err
+	}
+
+	width, height := resolveVideoDimensions(resolveSceneAspectRatio(storyboardRoot), req.Width, req.Height)
+	fps := resolveFinalFPS(storyboardRoot, req.FPS)
+	transitionDurationMs := resolveTransitionDurationMs(storyboardRoot, req.TransitionDurationMs)
+
+	var localPath string
+	var previewURL string
+	var mimeType string
+	durationMs := estimateFinalVideoDurationMs(scenes, transitionDurationMs)
+	if ffmpegPath != "" {
+		localPath = filepath.Join(finalDir, "final_video.mp4")
+		if err := runFFmpegFinalCompose(ffmpegPath, scenes, localPath, width, height, fps, resolveTransitionName(storyboardRoot), transitionDurationMs); err != nil {
+			failedAt := time.Now().UTC().Format(time.RFC3339)
+			project.Status = "final_video_failed"
+			project.FinalVideoStatus = "failed"
+			project.FinalVideoError = err.Error()
+			project.UpdatedAt = failedAt
+			_ = a.writeProject(project)
+			tasks = updateTaskStatus(tasks, "final_video_compositing", "", "failed", "Final video compositing failed", err.Error(), failedAt)
+			_ = a.writeTasks(projectID, tasks)
+			return projectFile{}, err
+		}
+		previewURL = a.projectStaticURL(projectID, filepath.Join("final", "final_video.mp4"))
+		mimeType = "video/mp4"
+	} else {
+		localPath = filepath.Join(finalDir, "final_video.html")
+		if err := writeFinalVideoPreviewHTML(localPath, projectID, project.Title, scenes); err != nil {
+			failedAt := time.Now().UTC().Format(time.RFC3339)
+			project.Status = "final_video_failed"
+			project.FinalVideoStatus = "failed"
+			project.FinalVideoError = err.Error()
+			project.UpdatedAt = failedAt
+			_ = a.writeProject(project)
+			tasks = updateTaskStatus(tasks, "final_video_compositing", "", "failed", "Final preview generation failed", err.Error(), failedAt)
+			_ = a.writeTasks(projectID, tasks)
+			return projectFile{}, err
+		}
+		previewURL = a.projectStaticURL(projectID, filepath.Join("final", "final_video.html"))
+		mimeType = "text/html"
+	}
+
+	finishedAt := time.Now().UTC().Format(time.RFC3339)
+	if mimeType == "video/mp4" {
+		if probedDurationMs := probeMediaDurationMs(localPath); probedDurationMs > 0 {
+			durationMs = probedDurationMs
+		}
+	}
+	project.Status = "final_video_ready"
+	project.FinalVideoStatus = "success"
+	if mimeType == "text/html" {
+		project.Status = "final_video_preview_ready"
+		project.FinalVideoStatus = "preview_ready"
+	}
+	project.FinalVideoLocalPath = localPath
+	project.FinalVideoPreviewURL = previewURL
+	project.FinalVideoMimeType = mimeType
+	project.FinalVideoDurationMs = durationMs
+	project.FinalVideoError = ""
+	project.FinalVideoGeneratedAt = finishedAt
+	project.UpdatedAt = finishedAt
+	if err := a.writeProject(project); err != nil {
+		return projectFile{}, err
+	}
+	successMessage := "Final video generated"
+	if mimeType == "text/html" {
+		successMessage = "Final preview generated without ffmpeg"
+	}
+	tasks = updateTaskStatus(tasks, "final_video_compositing", "", "success", successMessage, "", finishedAt)
+	if err := a.writeTasks(projectID, tasks); err != nil {
+		return projectFile{}, err
+	}
+	return project, nil
+}
+
+func (a *app) readStoryboardRoot(project projectFile) (map[string]any, error) {
+	if project.StoryboardPath == "" {
+		return nil, errors.New("storyboard path is empty")
+	}
+	var storyboard map[string]any
+	if err := readJSONFile(project.StoryboardPath, &storyboard); err != nil {
+		return nil, err
+	}
+	return storyboard, nil
+}
+
+func (a *app) runZeroTokenSceneImage(project projectFile, scene sceneFile, req generateSceneImageRequest, prompt string, aspectRatio string) (zeroTokenGeneratedImage, error) {
+	if !fileExists(a.zeroTokenCLIPath) {
+		return zeroTokenGeneratedImage{}, fmt.Errorf("zero-token bridge CLI not found at %s; run npm run build first", a.zeroTokenCLIPath)
+	}
+
+	timeoutMs := req.TimeoutMs
+	if timeoutMs <= 0 {
+		timeoutMs = 300000
+	}
+	browserProfileID := req.BrowserProfileID
+	if browserProfileID == "" {
+		browserProfileID = "chrome_main"
+	}
+	providerRef := resolveImageProviderRef(project.ProviderRef, req.ProviderRef)
+
+	payload := map[string]any{
+		"requestId":   fmt.Sprintf("image_%s_%d", scene.SceneID, time.Now().UnixMilli()),
+		"projectId":   project.ProjectID,
+		"sceneId":     scene.SceneID,
+		"providerRef": providerRef,
+		"capability":  "text_image",
+		"input": map[string]any{
+			"prompt":      prompt,
+			"count":       1,
+			"aspectRatio": aspectRatio,
+		},
+		"runtimeOptions": map[string]any{
+			"browserProfileId":   browserProfileID,
+			"timeoutMs":          timeoutMs,
+			"retryLimit":         1,
+			"saveDebugArtifacts": false,
+		},
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return zeroTokenGeneratedImage{}, err
+	}
+
+	cmd := exec.Command("node", a.zeroTokenCLIPath, "generate")
+	cmd.Dir = a.rootDir
+	cmd.Stdin = bytes.NewReader(body)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return zeroTokenGeneratedImage{}, fmt.Errorf("zero-token image bridge failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+
+	var resp bridgeResponse
+	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
+		return zeroTokenGeneratedImage{}, fmt.Errorf("decode zero-token image response: %w", err)
+	}
+	if !resp.OK {
+		return zeroTokenGeneratedImage{}, fmt.Errorf("zero-token bridge error: %s %s", resp.Name, resp.Error)
+	}
+	if len(resp.Result.Output.Images) == 0 {
+		return zeroTokenGeneratedImage{}, errors.New("zero-token did not return any image")
+	}
+	return resp.Result.Output.Images[0], nil
+}
+
+func (a *app) persistGeneratedImage(projectID string, sceneID string, image zeroTokenGeneratedImage) (string, string, string, error) {
+	ext := detectImageExtension(image.URL, image.LocalPath, image.MimeType)
+	targetPath := filepath.Join(a.projectsDir, projectID, "assets", "images", sceneID+ext)
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		return "", "", "", err
+	}
+
+	var raw []byte
+	switch {
+	case image.LocalPath != "" && fileExists(image.LocalPath):
+		blob, readErr := os.ReadFile(image.LocalPath)
+		if readErr != nil {
+			return "", "", "", readErr
+		}
+		raw = blob
+	case image.URL != "":
+		resp, fetchErr := http.Get(image.URL)
+		if fetchErr != nil {
+			return "", "", "", fetchErr
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return "", "", "", fmt.Errorf("download generated image: unexpected HTTP %d", resp.StatusCode)
+		}
+		blob, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return "", "", "", readErr
+		}
+		raw = blob
+	default:
+		return "", "", "", errors.New("generated image has neither url nor localPath")
+	}
+
+	if err := os.WriteFile(targetPath, raw, 0o644); err != nil {
+		return "", "", "", err
+	}
+	return targetPath, a.projectStaticURL(projectID, filepath.Join("assets", "images", sceneID+ext)), image.MimeType, nil
+}
+
+func (a *app) getProjectAssets(projectID string) (map[string]any, error) {
+	project, err := a.readProject(projectID)
+	if err != nil {
+		return nil, err
+	}
+	scenes, err := a.readSceneFiles(projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	images := make([]map[string]any, 0, len(scenes))
+	audioAssets := make([]map[string]any, 0, len(scenes))
+	subtitleAssets := make([]map[string]any, 0, len(scenes))
+	sceneVideos := make([]map[string]any, 0, len(scenes))
+	for _, scene := range scenes {
+		if scene.ImageLocalPath == "" && scene.ImageURL == "" {
+		} else {
+			images = append(images, map[string]any{
+				"scene_id":         scene.SceneID,
+				"status":           scene.ImageStatus,
+				"image_url":        scene.ImageURL,
+				"image_local_path": scene.ImageLocalPath,
+				"preview_url":      scene.ImagePreviewURL,
+			})
+		}
+		if scene.AudioLocalPath != "" || scene.AudioPreviewURL != "" {
+			audioAssets = append(audioAssets, map[string]any{
+				"scene_id":         scene.SceneID,
+				"status":           scene.AudioStatus,
+				"audio_local_path": scene.AudioLocalPath,
+				"preview_url":      scene.AudioPreviewURL,
+				"mime_type":        scene.AudioMimeType,
+				"duration_ms":      scene.AudioDurationMs,
+			})
+		}
+		if scene.SubtitleLocalPath != "" || scene.SubtitlePreviewURL != "" {
+			subtitleAssets = append(subtitleAssets, map[string]any{
+				"scene_id":            scene.SceneID,
+				"subtitle_local_path": scene.SubtitleLocalPath,
+				"preview_url":         scene.SubtitlePreviewURL,
+			})
+		}
+		if scene.SceneVideoLocalPath != "" || scene.SceneVideoPreviewURL != "" {
+			sceneVideos = append(sceneVideos, map[string]any{
+				"scene_id":          scene.SceneID,
+				"status":            scene.ComposeStatus,
+				"compose_mode":      scene.ComposeMode,
+				"video_local_path":  scene.SceneVideoLocalPath,
+				"preview_url":       scene.SceneVideoPreviewURL,
+				"mime_type":         scene.SceneVideoMimeType,
+				"scene_duration_ms": scene.SceneDurationMs,
+			})
+		}
+	}
+
+	storyboardURL := ""
+	if project.StoryboardPath != "" && fileExists(project.StoryboardPath) {
+		storyboardURL = a.projectStaticURL(projectID, "storyboard.json")
+	}
+
+	return map[string]any{
+		"project_id": projectID,
+		"assets": map[string]any{
+			"storyboard":   storyboardURL,
+			"images":       images,
+			"audio":        audioAssets,
+			"subtitles":    subtitleAssets,
+			"scene_videos": sceneVideos,
+			"final_video": map[string]any{
+				"status":       project.FinalVideoStatus,
+				"local_path":   project.FinalVideoLocalPath,
+				"preview_url":  project.FinalVideoPreviewURL,
+				"mime_type":    project.FinalVideoMimeType,
+				"duration_ms":  project.FinalVideoDurationMs,
+				"generated_at": project.FinalVideoGeneratedAt,
+				"error":        project.FinalVideoError,
+			},
+			"preview_root": a.projectStaticURL(projectID, ""),
+		},
+	}, nil
+}
+
+func newTask(kind string, sceneID string, status string, message string, now string) taskFile {
+	return taskFile{
+		TaskID:    fmt.Sprintf("task_%d", time.Now().UnixNano()),
+		Kind:      kind,
+		SceneID:   sceneID,
+		Status:    status,
+		Message:   message,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+}
+
+func upsertTask(tasks []taskFile, task taskFile) []taskFile {
+	for index := range tasks {
+		if tasks[index].Kind == task.Kind && tasks[index].SceneID == task.SceneID {
+			task.TaskID = tasks[index].TaskID
+			task.CreatedAt = tasks[index].CreatedAt
+			tasks[index] = task
+			return tasks
+		}
+	}
+	return append(tasks, task)
+}
+
+func updateTaskStatus(tasks []taskFile, kind string, sceneID string, status string, message string, errorMessage string, now string) []taskFile {
+	for index := range tasks {
+		if tasks[index].Kind == kind && tasks[index].SceneID == sceneID {
+			tasks[index].Status = status
+			tasks[index].Message = message
+			tasks[index].Error = errorMessage
+			tasks[index].UpdatedAt = now
+			tasks[index].FinishedAt = now
+			return tasks
+		}
+	}
+	task := newTask(kind, sceneID, status, message, now)
+	task.Error = errorMessage
+	task.FinishedAt = now
+	return append(tasks, task)
+}
+
+func pruneDerivedTasks(tasks []taskFile) []taskFile {
+	keep := make([]taskFile, 0, len(tasks))
+	for _, task := range tasks {
+		switch task.Kind {
+		case "storyboard_validation", "scene_task_split", "scene_image_generation", "scene_audio_generation", "scene_video_compositing", "final_video_compositing":
+			continue
+		default:
+			keep = append(keep, task)
+		}
+	}
+	return keep
+}
+
+func resolveImageProviderRef(projectProviderRef string, requestProviderRef string) string {
+	if strings.TrimSpace(requestProviderRef) != "" {
+		return strings.TrimSpace(requestProviderRef)
+	}
+	if strings.TrimSpace(projectProviderRef) != "" {
+		return strings.TrimSpace(projectProviderRef)
+	}
+	return "doubao/web"
+}
+
+func resolveAudioProviderRef(storyboard map[string]any, requestProviderRef string) string {
+	if strings.TrimSpace(requestProviderRef) != "" {
+		return strings.TrimSpace(requestProviderRef)
+	}
+	if audioProfile, ok := storyboard["audio_profile"].(map[string]any); ok {
+		if providerRef, ok := requiredStringField(audioProfile, "tts_provider_ref"); ok {
+			return providerRef
+		}
+	}
+	return "builtin/mock-tts"
+}
+
+func shouldUseEdgeTTS(providerRef string) bool {
+	providerRef = strings.ToLower(strings.TrimSpace(providerRef))
+	return strings.HasPrefix(providerRef, "edge-tts/")
+}
+
+func resolveSceneVoiceSettings(storyboard map[string]any, scene sceneFile, req generateSceneAudioRequest) (string, string, string) {
+	voiceName := strings.TrimSpace(req.VoiceName)
+	speakingRate := strings.TrimSpace(req.SpeakingRate)
+	pitch := strings.TrimSpace(req.Pitch)
+	if voiceName == "" {
+		voiceName, _ = requiredStringField(scene.Audio, "voice_name")
+	}
+	if speakingRate == "" {
+		speakingRate, _ = requiredStringField(scene.Audio, "speaking_rate")
+	}
+	if pitch == "" {
+		pitch, _ = requiredStringField(scene.Audio, "pitch")
+	}
+	if audioProfile, ok := storyboard["audio_profile"].(map[string]any); ok {
+		if voiceName == "" {
+			voiceName, _ = requiredStringField(audioProfile, "voice_name")
+		}
+		if speakingRate == "" {
+			speakingRate, _ = requiredStringField(audioProfile, "speaking_rate")
+		}
+		if pitch == "" {
+			pitch, _ = requiredStringField(audioProfile, "pitch")
+		}
+	}
+	if voiceName == "" {
+		voiceName = "builtin-mock-voice"
+	}
+	if speakingRate == "" {
+		speakingRate = "0%"
+	}
+	if pitch == "" {
+		pitch = "0%"
+	}
+	return voiceName, speakingRate, pitch
+}
+
+func resolveSceneAspectRatio(storyboard map[string]any) string {
+	if videoProfile, ok := storyboard["video_profile"].(map[string]any); ok {
+		if aspectRatio, ok := requiredStringField(videoProfile, "aspect_ratio"); ok {
+			return aspectRatio
+		}
+	}
+	return "16:9"
+}
+
+func resolveSceneFPS(storyboard map[string]any) int {
+	if videoProfile, ok := storyboard["video_profile"].(map[string]any); ok {
+		if fps, ok := requiredPositiveIntField(videoProfile, "fps"); ok {
+			return fps
+		}
+	}
+	return 24
+}
+
+func resolveTransitionName(storyboard map[string]any) string {
+	if videoProfile, ok := storyboard["video_profile"].(map[string]any); ok {
+		if transition, ok := requiredStringField(videoProfile, "transition"); ok {
+			return sanitizeFFmpegTransitionName(transition)
+		}
+	}
+	return "fade"
+}
+
+func sanitizeFFmpegTransitionName(name string) string {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "fade", "dissolve", "wipeleft", "wiperight", "wipeup", "wipedown", "slideleft", "slideright", "slideup", "slidedown", "smoothleft", "smoothright", "smoothup", "smoothdown", "circleopen", "circleclose", "rectcrop", "distance", "fadeblack", "fadewhite", "radial", "pixelize", "diagtl", "diagtr", "diagbl", "diagbr", "hlslice", "hrslice", "vuslice", "vdslice", "hblur", "fadegrays", "squeezeh", "squeezev", "zoomin", "coverleft", "coverright", "coverup", "coverdown", "revealleft", "revealright", "revealup", "revealdown":
+		return strings.ToLower(strings.TrimSpace(name))
+	default:
+		return "fade"
+	}
+}
+
+func resolveTransitionDurationMs(storyboard map[string]any, requested int) int {
+	if requested > 0 {
+		return requested
+	}
+	if videoProfile, ok := storyboard["video_profile"].(map[string]any); ok {
+		if duration, ok := requiredPositiveIntField(videoProfile, "transition_duration_ms"); ok {
+			return duration
+		}
+	}
+	return 500
+}
+
+func resolveFinalFPS(storyboard map[string]any, requested int) int {
+	if requested > 0 {
+		return requested
+	}
+	return resolveSceneFPS(storyboard)
+}
+
+func deriveSceneStatus(imageStatus string, audioStatus string, composeStatus string) string {
+	switch {
+	case composeStatus == "success":
+		return "video_ready"
+	case composeStatus == "preview_ready":
+		return "video_preview_ready"
+	case composeStatus == "running":
+		return "video_compositing"
+	case imageStatus == "success" && audioStatus == "success":
+		return "media_ready"
+	case imageStatus == "running":
+		return "image_generating"
+	case audioStatus == "running":
+		return "audio_generating"
+	case imageStatus == "success":
+		return "image_ready"
+	case audioStatus == "success":
+		return "audio_ready"
+	default:
+		return "scene_tasks_ready"
+	}
+}
+
+func buildSceneImagePrompt(storyboard map[string]any, scene sceneFile) string {
+	subjectPrompt, _ := requiredStringField(scene.Prompt, "subject_prompt")
+	scenePrompt, _ := requiredStringField(scene.Prompt, "scene_prompt")
+	fullPrompt, _ := requiredStringField(scene.Prompt, "full_prompt")
+	if fullPrompt != "" {
+		return fullPrompt
+	}
+
+	globalStyle := compactJSONObject(storyboard["global_style"])
+	characterBible := compactJSONObject(storyboard["character_bible"])
+	environment := compactJSONObject(scene.Environment)
+	visual := compactJSONObject(scene.Visual)
+	audio := compactJSONObject(scene.Audio)
+	effects := compactJSONObject(scene.Effects)
+
+	return strings.TrimSpace(fmt.Sprintf(`
+Generate one storyboard scene image for a children's story video.
+
+Scene title: %s
+Story function: %s
+Narration: %s
+Subject prompt: %s
+Scene prompt: %s
+Global style: %s
+Character bible: %s
+Environment: %s
+Visual guidance: %s
+Audio reference: %s
+Effects mood: %s
+
+Return the best single image for this scene.
+`, scene.Title, scene.StoryFunction, scene.Narration, subjectPrompt, scenePrompt, globalStyle, characterBible, environment, visual, audio, effects))
+}
+
+func compactJSONObject(value any) string {
+	if value == nil {
+		return "{}"
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return "{}"
+	}
+	return string(raw)
+}
+
+func detectImageExtension(imageURL string, localPath string, mimeType string) string {
+	candidates := []string{imageURL, localPath}
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		candidate = strings.Split(candidate, "?")[0]
+		ext := strings.ToLower(filepath.Ext(candidate))
+		switch ext {
+		case ".png", ".jpg", ".jpeg", ".webp", ".gif":
+			return ext
+		}
+	}
+
+	switch strings.ToLower(strings.TrimSpace(mimeType)) {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/webp":
+		return ".webp"
+	case "image/gif":
+		return ".gif"
+	default:
+		return ".png"
+	}
+}
+
+func (a *app) projectStaticURL(projectID string, relativePath string) string {
+	base := "/local/projects/" + strings.Trim(projectID, "/")
+	trimmed := strings.Trim(filepath.ToSlash(relativePath), "/")
+	if trimmed == "" {
+		return base + "/"
+	}
+	return base + "/" + trimmed
+}
+
+func preferredSubtitleText(scene sceneFile) string {
+	if strings.TrimSpace(scene.Subtitle) != "" {
+		return strings.TrimSpace(scene.Subtitle)
+	}
+	return strings.TrimSpace(scene.Narration)
+}
+
+func estimateSpeechDurationMs(text string, durationHintSec int, speakingRate string) int {
+	baseDuration := durationHintSec * 1000
+	if baseDuration <= 0 {
+		baseDuration = utf8.RuneCountInString(strings.TrimSpace(text))*220 + 1200
+	}
+	if baseDuration < 2000 {
+		baseDuration = 2000
+	}
+	rateFactor := 1.0 - parsePercent(speakingRate)
+	if rateFactor < 0.5 {
+		rateFactor = 0.5
+	}
+	if rateFactor > 2.0 {
+		rateFactor = 2.0
+	}
+	return int(float64(baseDuration) * rateFactor)
+}
+
+func parsePercent(value string) float64 {
+	text := strings.TrimSpace(strings.TrimSuffix(value, "%"))
+	if text == "" {
+		return 0
+	}
+	var number float64
+	if _, err := fmt.Sscanf(text, "%f", &number); err != nil {
+		return 0
+	}
+	return number / 100.0
+}
+
+func writePlaceholderSpeechWAV(path string, text string, durationMs int) error {
+	const sampleRate = 16000
+	const channels = 1
+	const bitsPerSample = 16
+
+	if durationMs <= 0 {
+		durationMs = 3000
+	}
+	sampleCount := sampleRate * durationMs / 1000
+	if sampleCount <= 0 {
+		sampleCount = sampleRate * 3
+	}
+	runes := []rune(strings.TrimSpace(text))
+	if len(runes) == 0 {
+		runes = []rune("...")
+	}
+
+	var buffer bytes.Buffer
+	dataSize := sampleCount * channels * (bitsPerSample / 8)
+	if _, err := buffer.WriteString("RIFF"); err != nil {
+		return err
+	}
+	if err := binary.Write(&buffer, binary.LittleEndian, uint32(36+dataSize)); err != nil {
+		return err
+	}
+	if _, err := buffer.WriteString("WAVEfmt "); err != nil {
+		return err
+	}
+	if err := binary.Write(&buffer, binary.LittleEndian, uint32(16)); err != nil {
+		return err
+	}
+	if err := binary.Write(&buffer, binary.LittleEndian, uint16(1)); err != nil {
+		return err
+	}
+	if err := binary.Write(&buffer, binary.LittleEndian, uint16(channels)); err != nil {
+		return err
+	}
+	if err := binary.Write(&buffer, binary.LittleEndian, uint32(sampleRate)); err != nil {
+		return err
+	}
+	byteRate := sampleRate * channels * (bitsPerSample / 8)
+	if err := binary.Write(&buffer, binary.LittleEndian, uint32(byteRate)); err != nil {
+		return err
+	}
+	blockAlign := channels * (bitsPerSample / 8)
+	if err := binary.Write(&buffer, binary.LittleEndian, uint16(blockAlign)); err != nil {
+		return err
+	}
+	if err := binary.Write(&buffer, binary.LittleEndian, uint16(bitsPerSample)); err != nil {
+		return err
+	}
+	if _, err := buffer.WriteString("data"); err != nil {
+		return err
+	}
+	if err := binary.Write(&buffer, binary.LittleEndian, uint32(dataSize)); err != nil {
+		return err
+	}
+
+	segmentSamples := maxInt(sampleCount/len(runes), sampleRate/8)
+	for sampleIndex := 0; sampleIndex < sampleCount; sampleIndex++ {
+		segmentIndex := (sampleIndex / segmentSamples) % len(runes)
+		segmentRune := runes[segmentIndex]
+		segmentPhase := float64(sampleIndex%segmentSamples) / float64(segmentSamples)
+		envelope := math.Sin(math.Pi * segmentPhase)
+		frequency := 220.0 + float64(int(segmentRune)%180)
+		sampleTime := float64(sampleIndex) / float64(sampleRate)
+		value := int16(7000 * envelope * math.Sin(2*math.Pi*frequency*sampleTime))
+		if err := binary.Write(&buffer, binary.LittleEndian, value); err != nil {
+			return err
+		}
+	}
+
+	return os.WriteFile(path, buffer.Bytes(), 0o644)
+}
+
+func writeSceneSubtitleFile(path string, text string, durationMs int) error {
+	if durationMs <= 0 {
+		durationMs = 3000
+	}
+	content := fmt.Sprintf("1\n00:00:00,000 --> %s\n%s\n", formatSRTTimestamp(durationMs), strings.TrimSpace(text))
+	return os.WriteFile(path, []byte(content), 0o644)
+}
+
+func formatSRTTimestamp(durationMs int) string {
+	if durationMs < 0 {
+		durationMs = 0
+	}
+	hours := durationMs / 3600000
+	minutes := (durationMs % 3600000) / 60000
+	seconds := (durationMs % 60000) / 1000
+	milliseconds := durationMs % 1000
+	return fmt.Sprintf("%02d:%02d:%02d,%03d", hours, minutes, seconds, milliseconds)
+}
+
+func resolveVideoDimensions(aspectRatio string, requestedWidth int, requestedHeight int) (int, int) {
+	if requestedWidth > 0 && requestedHeight > 0 {
+		return requestedWidth, requestedHeight
+	}
+	switch strings.TrimSpace(aspectRatio) {
+	case "9:16":
+		return 720, 1280
+	case "1:1":
+		return 1080, 1080
+	default:
+		return 1280, 720
+	}
+}
+
+func runFFmpegSceneCompose(ffmpegPath string, scene sceneFile, outputPath string, width int, height int, fps int, subtitleStyle string) error {
+	durationSec := float64(maxInt(scene.AudioDurationMs, scene.SceneDurationMs)) / 1000.0
+	if durationSec <= 0 {
+		durationSec = float64(maxInt(scene.DurationHintSec, 3))
+	}
+	cameraMotion := resolveSceneCameraMotion(scene)
+	filter := buildSceneVideoFilter(scene.SubtitleLocalPath, width, height, fps, cameraMotion, subtitleStyle)
+	args := []string{
+		"-y",
+		"-loop", "1",
+		"-i", scene.ImageLocalPath,
+		"-i", scene.AudioLocalPath,
+		"-t", fmt.Sprintf("%.3f", durationSec),
+		"-filter_complex", filter,
+		"-map", "[vout]",
+		"-map", "1:a:0",
+		"-c:v", "libx264",
+		"-preset", "veryfast",
+		"-tune", "stillimage",
+		"-c:a", "aac",
+		"-movflags", "+faststart",
+		"-shortest",
+		outputPath,
+	}
+	cmd := exec.Command(ffmpegPath, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("ffmpeg scene compose failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return nil
+}
+
+func buildSceneVideoFilter(subtitlePath string, width int, height int, fps int, cameraMotion string, subtitleStyle string) string {
+	motionFilter := buildCameraMotionFilter(width, height, fps, cameraMotion)
+	base := fmt.Sprintf("[0:v]scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,setsar=1,%s", width, height, width, height, motionFilter)
+	if subtitlePath != "" && fileExists(subtitlePath) {
+		base += fmt.Sprintf(",subtitles='%s':force_style='%s'", escapeFFmpegFilterPath(subtitlePath), escapeFFmpegForceStyle(subtitleStyle))
+	}
+	base += ",format=yuv420p[vout]"
+	return base
+}
+
+func buildCameraMotionFilter(width int, height int, fps int, cameraMotion string) string {
+	switch strings.TrimSpace(cameraMotion) {
+	case "slow_zoom_out":
+		return fmt.Sprintf("zoompan=z='if(lte(on,1),1.10,max(1.0,zoom-0.0006))':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=%dx%d:fps=%d", width, height, fps)
+	case "pan_left":
+		return fmt.Sprintf("zoompan=z='1.05':x='max(0,iw/8-on*0.4)':y='ih/2-(ih/zoom/2)':d=1:s=%dx%d:fps=%d", width, height, fps)
+	case "pan_right":
+		return fmt.Sprintf("zoompan=z='1.05':x='min(iw-iw/zoom, on*0.4)':y='ih/2-(ih/zoom/2)':d=1:s=%dx%d:fps=%d", width, height, fps)
+	case "floating_drift":
+		return fmt.Sprintf("zoompan=z='1.03+0.02*sin(on/24)':x='iw/2-(iw/zoom/2)+20*sin(on/30)':y='ih/2-(ih/zoom/2)+14*cos(on/28)':d=1:s=%dx%d:fps=%d", width, height, fps)
+	default:
+		return fmt.Sprintf("zoompan=z='min(zoom+0.0007,1.10)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=%dx%d:fps=%d", width, height, fps)
+	}
+}
+
+func resolveSceneCameraMotion(scene sceneFile) string {
+	if cameraMotion, ok := requiredStringField(scene.Visual, "camera_motion"); ok {
+		return cameraMotion
+	}
+	return "slow_zoom_in"
+}
+
+func buildSubtitleForceStyle(storyboard map[string]any) string {
+	fontSize := 42
+	marginV := 36
+	if videoProfile, ok := storyboard["video_profile"].(map[string]any); ok {
+		if subtitleStyle, ok := videoProfile["subtitle_style"].(map[string]any); ok {
+			if size, ok := requiredPositiveIntField(subtitleStyle, "font_size"); ok {
+				fontSize = size
+			}
+			if position, ok := requiredStringField(subtitleStyle, "position"); ok && position == "bottom-center" {
+				marginV = 36
+			}
+		}
+	}
+	return fmt.Sprintf("FontName=Noto Sans CJK SC,FontSize=%d,PrimaryColour=&H00FFFFFF,OutlineColour=&H40000000,BackColour=&H20000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV=%d", fontSize, marginV)
+}
+
+func escapeFFmpegFilterPath(path string) string {
+	replacer := strings.NewReplacer("\\", "\\\\", ":", "\\:", "'", "\\'")
+	return replacer.Replace(path)
+}
+
+func escapeFFmpegForceStyle(style string) string {
+	return strings.ReplaceAll(style, "'", "\\'")
+}
+
+func runFFmpegFinalCompose(ffmpegPath string, scenes []sceneFile, outputPath string, width int, height int, fps int, transition string, transitionDurationMs int) error {
+	if len(scenes) == 1 {
+		cmd := exec.Command(ffmpegPath,
+			"-y",
+			"-i", scenes[0].SceneVideoLocalPath,
+			"-vf", fmt.Sprintf("fps=%d,scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,format=yuv420p", fps, width, height, width, height),
+			"-af", "aresample=async=1:first_pts=0",
+			"-c:v", "libx264",
+			"-preset", "veryfast",
+			"-c:a", "aac",
+			"-movflags", "+faststart",
+			outputPath,
+		)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("ffmpeg final compose failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+		}
+		return nil
+	}
+
+	args := []string{"-y"}
+	filterParts := make([]string, 0, len(scenes)*2)
+	for index, scene := range scenes {
+		args = append(args, "-i", scene.SceneVideoLocalPath)
+		filterParts = append(filterParts,
+			fmt.Sprintf("[%d:v]settb=AVTB,fps=%d,scale=%d:%d,format=yuv420p[v%d]", index, fps, width, height, index),
+			fmt.Sprintf("[%d:a]aresample=async=1:first_pts=0[a%d]", index, index),
+		)
+	}
+
+	transitionSec := float64(transitionDurationMs) / 1000.0
+	if transitionSec <= 0 {
+		transitionSec = 0.5
+	}
+	videoLabel := "v0"
+	audioLabel := "a0"
+	accumulatedDurationSec := float64(maxInt(scenes[0].SceneDurationMs, 1000)) / 1000.0
+	for index := 1; index < len(scenes); index++ {
+		offsetSec := accumulatedDurationSec - transitionSec
+		if offsetSec < 0 {
+			offsetSec = 0
+		}
+		nextVideoLabel := fmt.Sprintf("vx%d", index)
+		nextAudioLabel := fmt.Sprintf("ax%d", index)
+		filterParts = append(filterParts,
+			fmt.Sprintf("[%s][v%d]xfade=transition=%s:duration=%.3f:offset=%.3f[%s]", videoLabel, index, transition, transitionSec, offsetSec, nextVideoLabel),
+			fmt.Sprintf("[%s][a%d]acrossfade=d=%.3f[%s]", audioLabel, index, transitionSec, nextAudioLabel),
+		)
+		videoLabel = nextVideoLabel
+		audioLabel = nextAudioLabel
+		accumulatedDurationSec += float64(maxInt(scenes[index].SceneDurationMs, 1000))/1000.0 - transitionSec
+	}
+
+	args = append(args,
+		"-filter_complex", strings.Join(filterParts, ";"),
+		"-map", "["+videoLabel+"]",
+		"-map", "["+audioLabel+"]",
+		"-c:v", "libx264",
+		"-preset", "veryfast",
+		"-c:a", "aac",
+		"-movflags", "+faststart",
+		outputPath,
+	)
+	cmd := exec.Command(ffmpegPath, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("ffmpeg final compose failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return nil
+}
+
+func writeScenePreviewHTML(path string, projectID string, scene sceneFile) error {
+	body := fmt.Sprintf(`<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>%s</title>
+    <style>
+      body { margin: 0; background: #050814; color: #fff; font-family: sans-serif; }
+      .frame { min-height: 100vh; display: grid; place-items: center; padding: 24px; box-sizing: border-box; }
+      .card { width: min(92vw, 820px); background: #0f172a; border: 1px solid #26324f; border-radius: 18px; overflow: hidden; box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35); }
+      img { width: 100%%; display: block; background: #111827; }
+      .meta { padding: 18px; }
+      h1 { margin: 0 0 10px; font-size: 22px; }
+      p { margin: 8px 0; line-height: 1.6; color: #d7def5; }
+      audio { width: 100%%; margin-top: 12px; }
+      .subtitle { margin-top: 14px; padding: 12px 14px; border-radius: 12px; background: rgba(255,255,255,0.08); font-size: 18px; }
+      .hint { font-size: 13px; color: #90a0c2; }
+    </style>
+  </head>
+  <body>
+    <div class="frame">
+      <section class="card">
+        <img src="%s" alt="%s" />
+        <div class="meta">
+          <h1>%s</h1>
+          <p>%s</p>
+          <div class="subtitle">%s</div>
+          <audio controls autoplay src="%s"></audio>
+          <p class="hint">当前环境未检测到 ffmpeg，已生成 HTML 预览 fallback。安装 ffmpeg 后再次调用 /video 接口即可生成 MP4。</p>
+          <p class="hint">项目：%s / Scene：%s</p>
+        </div>
+      </section>
+    </div>
+  </body>
+</html>
+`, html.EscapeString(scene.Title), scene.ImagePreviewURL, html.EscapeString(scene.Title), html.EscapeString(scene.Title), html.EscapeString(scene.Narration), html.EscapeString(preferredSubtitleText(scene)), scene.AudioPreviewURL, html.EscapeString(projectID), html.EscapeString(scene.SceneID))
+	return os.WriteFile(path, []byte(body), 0o644)
+}
+
+func writeFinalVideoPreviewHTML(path string, projectID string, projectTitle string, scenes []sceneFile) error {
+	var items strings.Builder
+	for _, scene := range scenes {
+		items.WriteString("<section class=\"scene\">")
+		items.WriteString("<h2>" + html.EscapeString(scene.Title) + "</h2>")
+		if strings.HasSuffix(strings.ToLower(scene.SceneVideoPreviewURL), ".mp4") {
+			items.WriteString("<video controls preload=\"metadata\" src=\"" + html.EscapeString(scene.SceneVideoPreviewURL) + "\"></video>")
+		} else if scene.SceneVideoPreviewURL != "" {
+			items.WriteString("<iframe src=\"" + html.EscapeString(scene.SceneVideoPreviewURL) + "\" loading=\"lazy\"></iframe>")
+		} else if scene.ImagePreviewURL != "" {
+			items.WriteString("<img src=\"" + html.EscapeString(scene.ImagePreviewURL) + "\" alt=\"" + html.EscapeString(scene.Title) + "\" />")
+			if scene.AudioPreviewURL != "" {
+				items.WriteString("<audio controls src=\"" + html.EscapeString(scene.AudioPreviewURL) + "\"></audio>")
+			}
+		}
+		items.WriteString("<p>" + html.EscapeString(preferredSubtitleText(scene)) + "</p>")
+		items.WriteString("</section>")
+	}
+
+	body := fmt.Sprintf(`<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>%s</title>
+    <style>
+      body { margin: 0; font-family: sans-serif; background: #08101f; color: #fff; }
+      main { max-width: 1080px; margin: 0 auto; padding: 24px; }
+      h1 { margin-top: 0; }
+      .hint { color: #97a5c6; }
+      .scene { background: #101a30; border: 1px solid #25304b; border-radius: 16px; padding: 18px; margin-bottom: 18px; }
+      video, iframe, img, audio { width: 100%%; border: 0; border-radius: 12px; display: block; margin-top: 12px; background: #000; }
+      iframe { min-height: 640px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>%s</h1>
+      <p class="hint">项目：%s。当前环境缺少 ffmpeg 或 scene mp4 不完整，已生成 final_video HTML fallback。</p>
+      %s
+    </main>
+  </body>
+</html>
+`, html.EscapeString(projectTitle), html.EscapeString(projectTitle), html.EscapeString(projectID), items.String())
+	return os.WriteFile(path, []byte(body), 0o644)
+}
+
+func (a *app) generateSceneAudioMedia(audioPath string, subtitlePath string, scene sceneFile, providerRef string, voiceName string, speakingRate string, pitch string, fallbackDurationMs int) error {
+	if shouldUseEdgeTTS(providerRef) {
+		return runEdgeTTS(audioPath, subtitlePath, scene.Narration, voiceName, speakingRate, pitch)
+	}
+	return writePlaceholderSpeechWAV(audioPath, scene.Narration, fallbackDurationMs)
+}
+
+func runEdgeTTS(audioPath string, subtitlePath string, text string, voiceName string, speakingRate string, pitch string) error {
+	edgeTTSPath, err := exec.LookPath("edge-tts")
+	if err != nil {
+		return err
+	}
+	args := []string{
+		"--text", text,
+		"--voice", voiceName,
+		"--rate=" + normalizeEdgeRate(speakingRate),
+		"--pitch=" + normalizeEdgePitch(pitch),
+		"--write-media", audioPath,
+		"--write-subtitles", subtitlePath,
+	}
+	cmd := exec.Command(edgeTTSPath, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("edge-tts failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return nil
+}
+
+func normalizeEdgeRate(value string) string {
+	text := strings.TrimSpace(value)
+	if text == "" {
+		return "+0%"
+	}
+	if trimmed, ok := strings.CutSuffix(text, "%"); ok {
+		return ensureSignedValue(trimmed) + "%"
+	}
+	return ensureSignedValue(text) + "%"
+}
+
+func normalizeEdgePitch(value string) string {
+	text := strings.TrimSpace(value)
+	if text == "" {
+		return "+0Hz"
+	}
+	lowerText := strings.ToLower(text)
+	if strings.HasSuffix(lowerText, "hz") {
+		return ensureSignedValue(strings.TrimSpace(text[:len(text)-2])) + "Hz"
+	}
+	// Accept the old percent-shaped input as a backwards-compatible alias.
+	if trimmed, ok := strings.CutSuffix(text, "%"); ok {
+		return ensureSignedValue(trimmed) + "Hz"
+	}
+	return ensureSignedValue(text) + "Hz"
+}
+
+func ensureSignedValue(value string) string {
+	text := strings.TrimSpace(value)
+	if text == "" {
+		return "+0"
+	}
+	if strings.HasPrefix(text, "+") || strings.HasPrefix(text, "-") {
+		return text
+	}
+	return "+" + text
+}
+
+func lookupCommand(name string) string {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return ""
+	}
+	return path
+}
+
+func probeMediaDurationMs(path string) int {
+	ffprobePath, err := exec.LookPath("ffprobe")
+	if err != nil {
+		return 0
+	}
+	cmd := exec.Command(ffprobePath, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", path)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if runErr := cmd.Run(); runErr != nil {
+		return 0
+	}
+	value := strings.TrimSpace(stdout.String())
+	durationSec, err := strconv.ParseFloat(value, 64)
+	if err != nil || durationSec <= 0 {
+		return 0
+	}
+	return int(math.Round(durationSec * 1000))
+}
+
+func isSceneVideoReadyForFinalCompose(scene sceneFile) bool {
+	if scene.ComposeStatus != "success" {
+		return false
+	}
+	if scene.SceneVideoLocalPath == "" || !fileExists(scene.SceneVideoLocalPath) {
+		return false
+	}
+	if strings.ToLower(filepath.Ext(scene.SceneVideoLocalPath)) != ".mp4" {
+		return false
+	}
+	return scene.ComposeMode != "html_preview_fallback"
+}
+
+func isSceneVideoPreviewReady(scene sceneFile) bool {
+	if scene.ComposeStatus != "success" && scene.ComposeStatus != "preview_ready" {
+		return false
+	}
+	return scene.SceneVideoLocalPath != "" && fileExists(scene.SceneVideoLocalPath)
+}
+
+func estimateFinalVideoDurationMs(scenes []sceneFile, transitionDurationMs int) int {
+	if len(scenes) == 0 {
+		return 0
+	}
+	total := 0
+	for _, scene := range scenes {
+		total += maxInt(scene.SceneDurationMs, 1000)
+	}
+	total -= transitionDurationMs * maxInt(len(scenes)-1, 0)
+	if total < 0 {
+		return 0
+	}
+	return total
+}
+
+func allSceneVideosAreMP4(scenes []sceneFile) bool {
+	if len(scenes) == 0 {
+		return false
+	}
+	for _, scene := range scenes {
+		if strings.ToLower(filepath.Ext(scene.SceneVideoLocalPath)) != ".mp4" {
+			return false
+		}
+	}
+	return true
+}
+
+func maxInt(left int, right int) int {
+	if left > right {
+		return left
+	}
+	return right
+}
+
+func validateStoryboard(raw []byte, projectID string, validatedAt string) (storyboardValidationResult, []sceneFile) {
+	result := storyboardValidationResult{
+		Valid:       false,
+		Errors:      []string{},
+		ValidatedAt: validatedAt,
+	}
+
+	var root map[string]any
+	if err := json.Unmarshal(raw, &root); err != nil {
+		result.Errors = append(result.Errors, "storyboard.json is not valid JSON")
+		return result, nil
+	}
+
+	requiredTopLevel := []string{
+		"meta",
+		"project",
+		"global_style",
+		"character_bible",
+		"audio_profile",
+		"video_profile",
+		"render_rules",
+		"scenes",
+	}
+	for _, key := range requiredTopLevel {
+		if _, ok := root[key]; !ok {
+			result.Errors = append(result.Errors, fmt.Sprintf("missing top-level field: %s", key))
+		}
+	}
+
+	scenesValue, ok := root["scenes"]
+	if !ok {
+		return result, nil
+	}
+
+	sceneItems, ok := scenesValue.([]any)
+	if !ok {
+		result.Errors = append(result.Errors, "scenes must be an array")
+		return result, nil
+	}
+
+	result.SceneCount = len(sceneItems)
+	if len(sceneItems) == 0 {
+		result.Errors = append(result.Errors, "scenes must not be empty")
+	}
+	if len(sceneItems) > 20 {
+		result.Errors = append(result.Errors, "scenes count exceeds MVP limit of 20")
+	}
+
+	seenSceneIDs := make(map[string]struct{}, len(sceneItems))
+	scenes := make([]sceneFile, 0, len(sceneItems))
+	for index, item := range sceneItems {
+		sceneMap, ok := item.(map[string]any)
+		if !ok {
+			result.Errors = append(result.Errors, fmt.Sprintf("scenes[%d] must be an object", index))
+			continue
+		}
+		sceneErrors := make([]string, 0)
+
+		sceneID, ok := requiredStringField(sceneMap, "scene_id")
+		if !ok {
+			sceneErrors = append(sceneErrors, fmt.Sprintf("scenes[%d].scene_id is required", index))
+		} else {
+			if _, exists := seenSceneIDs[sceneID]; exists {
+				sceneErrors = append(sceneErrors, fmt.Sprintf("duplicate scene_id: %s", sceneID))
+			}
+			seenSceneIDs[sceneID] = struct{}{}
+		}
+
+		sequence, ok := requiredPositiveIntField(sceneMap, "sequence")
+		if !ok {
+			sceneErrors = append(sceneErrors, fmt.Sprintf("scenes[%d].sequence must be a positive integer", index))
+		}
+		title, ok := requiredStringField(sceneMap, "title")
+		if !ok {
+			sceneErrors = append(sceneErrors, fmt.Sprintf("scenes[%d].title is required", index))
+		}
+		storyFunction, ok := requiredStringField(sceneMap, "story_function")
+		if !ok {
+			sceneErrors = append(sceneErrors, fmt.Sprintf("scenes[%d].story_function is required", index))
+		}
+		narration, ok := requiredStringField(sceneMap, "narration")
+		if !ok {
+			sceneErrors = append(sceneErrors, fmt.Sprintf("scenes[%d].narration is required", index))
+		}
+		subtitle, ok := requiredStringField(sceneMap, "subtitle")
+		if !ok {
+			sceneErrors = append(sceneErrors, fmt.Sprintf("scenes[%d].subtitle is required", index))
+		}
+		durationHintSec, ok := requiredPositiveIntField(sceneMap, "duration_hint_sec")
+		if !ok {
+			sceneErrors = append(sceneErrors, fmt.Sprintf("scenes[%d].duration_hint_sec must be a positive integer", index))
+		}
+		characters, ok := requiredStringSliceField(sceneMap, "characters")
+		if !ok {
+			sceneErrors = append(sceneErrors, fmt.Sprintf("scenes[%d].characters must be a string array", index))
+		}
+		objects, ok := requiredStringSliceField(sceneMap, "objects")
+		if !ok {
+			sceneErrors = append(sceneErrors, fmt.Sprintf("scenes[%d].objects must be a string array", index))
+		}
+		environment, ok := requiredObjectField(sceneMap, "environment")
+		if !ok {
+			sceneErrors = append(sceneErrors, fmt.Sprintf("scenes[%d].environment must be an object", index))
+		}
+		visual, ok := requiredObjectField(sceneMap, "visual")
+		if !ok {
+			sceneErrors = append(sceneErrors, fmt.Sprintf("scenes[%d].visual must be an object", index))
+		}
+		prompt, ok := requiredObjectField(sceneMap, "prompt")
+		if !ok {
+			sceneErrors = append(sceneErrors, fmt.Sprintf("scenes[%d].prompt must be an object", index))
+		} else {
+			if _, hasSubjectPrompt := requiredStringField(prompt, "subject_prompt"); !hasSubjectPrompt {
+				sceneErrors = append(sceneErrors, fmt.Sprintf("scenes[%d].prompt.subject_prompt is required", index))
+			}
+			if _, hasScenePrompt := requiredStringField(prompt, "scene_prompt"); !hasScenePrompt {
+				sceneErrors = append(sceneErrors, fmt.Sprintf("scenes[%d].prompt.scene_prompt is required", index))
+			}
+			if _, exists := prompt["full_prompt"]; !exists {
+				sceneErrors = append(sceneErrors, fmt.Sprintf("scenes[%d].prompt.full_prompt is required", index))
+			}
+		}
+		audio, ok := requiredObjectField(sceneMap, "audio")
+		if !ok {
+			sceneErrors = append(sceneErrors, fmt.Sprintf("scenes[%d].audio must be an object", index))
+		}
+		effects, ok := requiredObjectField(sceneMap, "effects")
+		if !ok {
+			sceneErrors = append(sceneErrors, fmt.Sprintf("scenes[%d].effects must be an object", index))
+		}
+
+		if len(sceneErrors) > 0 {
+			result.Errors = append(result.Errors, sceneErrors...)
+			continue
+		}
+
+		scenes = append(scenes, sceneFile{
+			ProjectID:       projectID,
+			SceneID:         sceneID,
+			Sequence:        sequence,
+			Title:           title,
+			StoryFunction:   storyFunction,
+			Narration:       narration,
+			Subtitle:        subtitle,
+			DurationHintSec: durationHintSec,
+			Characters:      characters,
+			Objects:         objects,
+			Environment:     environment,
+			Visual:          visual,
+			Prompt:          prompt,
+			Audio:           audio,
+			Effects:         effects,
+			Status:          "pending",
+			ImageStatus:     "pending",
+			AudioStatus:     "pending",
+			ComposeStatus:   "pending",
+			CreatedAt:       validatedAt,
+			UpdatedAt:       validatedAt,
+		})
+	}
+
+	result.Valid = len(result.Errors) == 0
+	if !result.Valid {
+		return result, nil
+	}
+	return result, scenes
+}
+
+func requiredStringField(obj map[string]any, key string) (string, bool) {
+	value, ok := obj[key]
+	if !ok {
+		return "", false
+	}
+	text, ok := value.(string)
+	if !ok || strings.TrimSpace(text) == "" {
+		return "", false
+	}
+	return strings.TrimSpace(text), true
+}
+
+func requiredObjectField(obj map[string]any, key string) (map[string]any, bool) {
+	value, ok := obj[key]
+	if !ok {
+		return nil, false
+	}
+	child, ok := value.(map[string]any)
+	return child, ok
+}
+
+func requiredStringSliceField(obj map[string]any, key string) ([]string, bool) {
+	value, ok := obj[key]
+	if !ok {
+		return nil, false
+	}
+	items, ok := value.([]any)
+	if !ok {
+		return nil, false
+	}
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		text, ok := item.(string)
+		if !ok || strings.TrimSpace(text) == "" {
+			return nil, false
+		}
+		result = append(result, strings.TrimSpace(text))
+	}
+	return result, true
+}
+
+func requiredPositiveIntField(obj map[string]any, key string) (int, bool) {
+	value, ok := obj[key]
+	if !ok {
+		return 0, false
+	}
+	switch number := value.(type) {
+	case float64:
+		if number <= 0 {
+			return 0, false
+		}
+		return int(number), true
+	case int:
+		if number <= 0 {
+			return 0, false
+		}
+		return number, true
+	default:
+		return 0, false
+	}
+}
+
+func buildStoryboardPrompt(project projectFile) string {
+	return strings.TrimSpace(fmt.Sprintf(`
+请将下面的儿童故事转换为严格 JSON 的 storyboard.json。
+
+必须满足：
+1. 只返回 JSON，不要返回 markdown，不要解释。
+2. 顶层必须包含：meta, project, global_style, character_bible, audio_profile, video_profile, render_rules, scenes。
+3. scenes 必须是数组，每个 scene 必须包含：scene_id, sequence, title, story_function, narration, subtitle, duration_hint_sec, characters, objects, environment, visual, prompt, audio, effects。
+4. prompt.full_prompt 先返回空字符串。
+5. 内容适合儿童故事视频，语气温和，结构清晰。
+
+项目信息：
+- project_id: %s
+- title: %s
+
+原始故事：
+%s
+`, project.ProjectID, project.Title, project.Story))
+}
+
+func decodeJSONBody(r io.Reader, target any) error {
+	body, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(body)) == 0 {
+		return io.EOF
+	}
+	return json.Unmarshal(body, target)
+}
+
+func extractJSONObject(raw string) ([]byte, error) {
+	candidate := strings.TrimSpace(raw)
+	if strings.HasPrefix(candidate, "```") {
+		lines := strings.Split(candidate, "\n")
+		if len(lines) >= 3 {
+			candidate = strings.Join(lines[1:len(lines)-1], "\n")
+			candidate = strings.TrimPrefix(strings.TrimSpace(candidate), "json")
+			candidate = strings.TrimSpace(candidate)
+		}
+	}
+
+	start := strings.Index(candidate, "{")
+	end := strings.LastIndex(candidate, "}")
+	if start < 0 || end <= start {
+		return nil, errors.New("storyboard JSON object not found in zero-token output")
+	}
+	return normalizeJSON([]byte(candidate[start : end+1]))
+}
+
+func normalizeJSON(raw []byte) ([]byte, error) {
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, err
+	}
+	return json.MarshalIndent(value, "", "  ")
+}
+
+func readJSONFile(path string, target any) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(raw, target)
+}
+
+func writeJSONFile(path string, value any) error {
+	raw, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(raw, '\n'), 0o644)
+}
+
+func writeRawJSONFile(path string, raw []byte) error {
+	return os.WriteFile(path, append(raw, '\n'), 0o644)
+}
+
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	raw, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = w.Write(append(raw, '\n'))
+}
+
+func writeHTML(w http.ResponseWriter, status int, body string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = io.WriteString(w, body)
+}
+
+func writeError(w http.ResponseWriter, status int, err error) {
+	writeJSON(w, status, map[string]any{
+		"error": err.Error(),
+	})
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func envOrDefault(key string, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func defaultProviderRef(providerRef string) string {
+	if strings.TrimSpace(providerRef) == "" {
+		return "doubao/web"
+	}
+	return strings.TrimSpace(providerRef)
+}
+
+func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
+	return fmt.Sprintf(`<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Story Video Server</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      body {
+        margin: 0;
+        background: #0b1020;
+        color: #e8eefc;
+      }
+      main {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+      h1, h2 {
+        margin: 0 0 12px;
+      }
+      p {
+        color: #b8c2dd;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 16px;
+        margin-top: 20px;
+      }
+      .panel {
+        background: #121936;
+        border: 1px solid #26304f;
+        border-radius: 12px;
+        padding: 16px;
+      }
+      label {
+        display: block;
+        margin: 10px 0 6px;
+        font-size: 13px;
+        color: #b8c2dd;
+      }
+      input, textarea, button {
+        width: 100%%;
+        box-sizing: border-box;
+        border-radius: 8px;
+        border: 1px solid #324068;
+        background: #0e1530;
+        color: #e8eefc;
+        padding: 10px 12px;
+        font: inherit;
+      }
+      textarea {
+        min-height: 120px;
+        resize: vertical;
+      }
+      button {
+        cursor: pointer;
+        background: #3b82f6;
+        border-color: #3b82f6;
+        font-weight: 600;
+        margin-top: 12px;
+      }
+      button.secondary {
+        background: #182342;
+        border-color: #324068;
+      }
+      .status {
+        display: inline-block;
+        margin-top: 8px;
+        font-size: 13px;
+        color: #98a6cf;
+      }
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        background: #09101f;
+        border-radius: 10px;
+        padding: 14px;
+        border: 1px solid #26304f;
+        min-height: 320px;
+        overflow: auto;
+      }
+      code {
+        background: #182342;
+        padding: 2px 6px;
+        border-radius: 6px;
+      }
+      ul {
+        padding-left: 18px;
+        color: #cfd8f3;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Story Video Server</h1>
+      <p>这是 Go 后端的最小操作页，用于验证本地项目目录、Go API 和 zero-token 桥接是否打通。</p>
+      <p><strong>projects 目录：</strong> <code>%s</code></p>
+      <p><strong>zero-token 构建状态：</strong> <code>%t</code></p>
+
+      <div class="grid">
+        <section class="panel">
+          <h2>快速操作</h2>
+          <button id="healthBtn" class="secondary">检查健康状态</button>
+          <button id="listBtn" class="secondary">列出项目</button>
+
+          <label for="title">项目标题</label>
+          <input id="title" value="小云朵的星星收集之旅" />
+
+          <label for="story">故事内容</label>
+          <textarea id="story">在很远很远的天空上，住着一朵软乎乎的小云朵，名字叫棉棉。一天晚上，它决定帮助迷路的小星星回家。</textarea>
+
+          <label for="providerRef">Storyboard Provider</label>
+          <input id="providerRef" value="doubao/web" />
+
+          <button id="createBtn">创建项目</button>
+          <span class="status" id="statusText">等待操作</span>
+        </section>
+
+        <section class="panel">
+          <h2>Storyboard 生成</h2>
+          <label for="projectId">项目 ID</label>
+          <input id="projectId" placeholder="先创建项目，或输入已有 project_id" />
+
+          <label for="storyboardProviderRef">Provider Ref</label>
+          <input id="storyboardProviderRef" value="doubao/web" />
+
+          <button id="generateBtn">生成 Storyboard</button>
+
+          <h2 style="margin-top: 20px;">接口</h2>
+          <ul>
+            <li><code>GET /healthz</code></li>
+            <li><code>GET /api/projects</code></li>
+            <li><code>POST /api/projects</code></li>
+            <li><code>GET /api/projects/{projectId}</code></li>
+            <li><code>GET /api/projects/{projectId}/scenes</code></li>
+            <li><code>GET /api/projects/{projectId}/scenes/{sceneId}</code></li>
+            <li><code>POST /api/projects/{projectId}/storyboard</code></li>
+            <li><code>POST /api/projects/{projectId}/scenes/{sceneId}/image</code></li>
+			<li><code>POST /api/projects/{projectId}/scenes/{sceneId}/audio</code></li>
+			<li><code>POST /api/projects/{projectId}/scenes/{sceneId}/video</code></li>
+			<li><code>POST /api/projects/{projectId}/final-video</code></li>
+            <li><code>GET /api/projects/{projectId}/assets</code></li>
+            <li><code>GET /local/projects/{projectId}/...</code></li>
+          </ul>
+        </section>
+      </div>
+
+      <section class="panel" style="margin-top: 16px;">
+        <h2>结果</h2>
+        <pre id="output">{ "ok": true }</pre>
+      </section>
+    </main>
+
+    <script>
+      const output = document.getElementById("output");
+      const statusText = document.getElementById("statusText");
+
+      function setOutput(value) {
+        output.textContent = JSON.stringify(value, null, 2);
+      }
+
+      async function readJson(res) {
+        const text = await res.text();
+        try {
+          return JSON.parse(text);
+        } catch {
+          return { raw: text, status: res.status };
+        }
+      }
+
+      async function callApi(path, init) {
+        const res = await fetch(path, init);
+        const data = await readJson(res);
+        setOutput(data);
+        if (!res.ok) {
+          throw new Error(data.error || ("HTTP " + res.status));
+        }
+        return data;
+      }
+
+      document.getElementById("healthBtn").addEventListener("click", async () => {
+        statusText.textContent = "检查中...";
+        try {
+          await callApi("/healthz");
+          statusText.textContent = "健康检查完成";
+        } catch (error) {
+          statusText.textContent = error.message;
+        }
+      });
+
+      document.getElementById("listBtn").addEventListener("click", async () => {
+        statusText.textContent = "读取项目中...";
+        try {
+          await callApi("/api/projects");
+          statusText.textContent = "项目列表已刷新";
+        } catch (error) {
+          statusText.textContent = error.message;
+        }
+      });
+
+      document.getElementById("createBtn").addEventListener("click", async () => {
+        statusText.textContent = "创建项目中...";
+        try {
+          const data = await callApi("/api/projects", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: document.getElementById("title").value,
+              story: document.getElementById("story").value,
+              provider_ref: document.getElementById("providerRef").value
+            })
+          });
+          const projectId = data.project && data.project.project_id;
+          if (projectId) {
+            document.getElementById("projectId").value = projectId;
+          }
+          statusText.textContent = "项目已创建";
+        } catch (error) {
+          statusText.textContent = error.message;
+        }
+      });
+
+      document.getElementById("generateBtn").addEventListener("click", async () => {
+        const projectId = document.getElementById("projectId").value.trim();
+        if (!projectId) {
+          statusText.textContent = "请先输入 project_id";
+          return;
+        }
+        statusText.textContent = "生成 storyboard 中...";
+        try {
+          await callApi("/api/projects/" + encodeURIComponent(projectId) + "/storyboard", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              provider_ref: document.getElementById("storyboardProviderRef").value,
+              timeout_ms: 300000
+            })
+          });
+          statusText.textContent = "storyboard 生成完成";
+        } catch (error) {
+          statusText.textContent = error.message;
+        }
+      });
+    </script>
+  </body>
+</html>`, projectsDir, zeroTokenBuilt)
+}

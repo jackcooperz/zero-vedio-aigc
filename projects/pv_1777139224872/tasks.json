@@ -1,0 +1,12 @@
+[
+  {
+    "task_id": "task_1777139232757056239",
+    "kind": "storyboard_generation",
+    "status": "failed",
+    "message": "Calling local zero-token bridge CLI",
+    "error": "storyboard JSON object not found in zero-token output",
+    "created_at": "2026-04-25T17:47:12Z",
+    "updated_at": "2026-04-25T17:47:32Z",
+    "finished_at": "2026-04-25T17:47:32Z"
+  }
+]

@@ -7,6 +7,8 @@
     "chrome:debug": "bash scripts/start-chrome-debug.sh",
     "dev:web": "npm run build && node dist/web-demo/server.js",
     "serve:web": "node dist/web-demo/server.js",
+    "dev:story-video": "npm run build && go run ./cmd/story-video-server",
+    "build:story-video": "go build ./cmd/story-video-server",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.json"
   },

@@ -19,7 +19,7 @@
 
 #### 原则 1：一次模型，后续规则执行
 
-LLM 只在入口处调用一次，用于将原始故事文本转换成结构化的 `storyboard.json`。后续图片生成、配音、字幕、视频合成、BGM 混音、文件上传等步骤全部走确定性工程流水线，不再依赖 LLM 进行动态决策。
+首版优先复用本地 `zero-token` 模块，在入口处调用一次 Storyboard 生成能力，将原始故事文本转换成结构化的 `storyboard.json`。后续图片生成、配音、字幕、视频合成、BGM 混音、文件上传等步骤全部走确定性工程流水线，不再依赖额外的模型动态决策。
 
 #### 原则 2：每个 Scene 独立可执行
 
@@ -78,8 +78,8 @@ LLM 只在入口处调用一次，用于将原始故事文本转换成结构化�
           │               │               │
           ▼               ▼               ▼
 ┌────────────────┐ ┌────────────────┐ ┌────────────────┐
-│ LLM Service    │ │ Image Worker   │ │ TTS Worker     │
-│ 仅一次调用     │ │ 场景图生成      │ │ 配音+字幕时间轴 │
+│ zero-token     │ │ Image Worker   │ │ TTS Worker     │
+│ 统一模型接入层  │ │ 场景图生成      │ │ 配音+字幕时间轴 │
 └────────────────┘ └────────────────┘ └────────────────┘
                               │
                               ▼
@@ -90,8 +90,8 @@ LLM 只在入口处调用一次，用于将原始故事文本转换成结构化�
                               │
                               ▼
                     ┌────────────────────┐
-                    │ Storage & Database  │
-                    │ DB / OSS / Queue    │
+│ Local Storage       │
+│ JSON / Files        │
                     └────────────────────┘
 ```
 
@@ -100,7 +100,7 @@ LLM 只在入口处调用一次，用于将原始故事文本转换成结构化�
 ```text
 原始故事文本
   ↓
-LLM 生成 storyboard.json
+zero-token 生成 storyboard.json
   ↓
 Orchestrator 校验 storyboard.json
   ↓
@@ -126,7 +126,7 @@ Orchestrator 校验 storyboard.json
       ↓
 [创建 Project]
       ↓
-[调用 LLM 生成 storyboard.json]
+[调用本地 zero-token 生成 storyboard.json]
       ↓
 [JSON Schema 校验]
       ↓
@@ -229,7 +229,7 @@ Orchestrator 校验 storyboard.json
 - Python FastAPI
 - Node.js
 
-首版建议使用 Go 或 FastAPI。
+首版后端明确选择 Go 实现。
 
 ### 4.3 Orchestrator 模块
 
@@ -238,12 +238,12 @@ Orchestrator 是系统核心中枢。
 职责：
 
 - 推进项目状态机
-- 调用 LLM 生成 `storyboard.json`
+- 调用本地 `zero-token` 生成 `storyboard.json`
 - 拆分 Scene 任务
 - 调度 Image Worker、TTS Worker、FFmpeg Worker
 - 聚合结果
 - 执行失败重试
-- 写入数据库
+- 写入本地 JSON 状态文件
 
 核心能力：
 
@@ -257,14 +257,15 @@ Orchestrator 是系统核心中枢。
 - 代码内状态机 + 队列
 - 首版不需要引入重型 Workflow 框架
 
-### 4.4 LLM Service 模块
+### 4.4 zero-token 模块
 
 职责：
 
-- 输入原始故事
-- 输出 `storyboard.json`
+- 复用本地 `src/zero-token` 能力
+- 统一封装 Storyboard / 图片等模型调用入口
+- 输入原始故事并输出 `storyboard.json`
 
-注意：这里的 LLM 只调用一次。
+注意：首版这里不单独实现新的模型服务，而是直接复用本地 `zero-token` 模块；Storyboard 生成只调用一次。
 
 输入：
 
@@ -283,6 +284,7 @@ Orchestrator 是系统核心中枢。
 - 输出必须符合 JSON Schema
 - 不允许返回自然语言解释
 - 只允许返回 JSON
+- Provider 选择优先走本地 `zero-token` 已支持的 Web Provider
 
 ### 4.5 Storyboard Validator 模块
 
@@ -333,7 +335,7 @@ Orchestrator 是系统核心中枢。
 - 每个 Scene 独立生成
 - 支持重试
 - 支持缓存命中
-- 不再次调用 LLM 写 Prompt
+- 不再次调用 Storyboard 生成能力写 Prompt
 
 ### 4.7 TTS Worker 模块
 
@@ -414,36 +416,76 @@ Orchestrator 是系统核心中枢。
 
 职责：
 
-- 存储中间文件
-- 存储成品
-- 提供下载地址
-- 管理生命周期
+- 使用本地 JSON 文件保存项目状态与中间结果
+- 使用本地项目目录保存生成产物
+- 为上层模块提供统一的文件路径约定
+- 以轻量级方式支持开发和单机部署
 
 存储内容：
 
 - `storyboard.json`
+- `project.json`
+- `tasks.json`
 - Scene 图片
 - Scene 音频
 - Scene 字幕
 - Scene 视频
-- final 视频
+- `final_video.mp4`
 
-推荐：
+实现方式：
 
-- 本地开发：本地磁盘
-- 生产环境：OSS / S3
+- 不引入对象存储
+- 不强依赖数据库
+- 所有数据直接写入本地磁盘
+- 每个项目使用独立目录保存全部文件
+
+推荐目录结构：
+
+```text
+projects/
+  pv_0001/
+    project.json
+    storyboard.json
+    tasks.json
+    scenes/
+      scene_001/
+        image.png
+        audio.wav
+        subtitle.srt
+        video.mp4
+      scene_002/
+        image.png
+        audio.wav
+        subtitle.srt
+        video.mp4
+    final/
+      final_video.mp4
+```
+
+说明：
+
+- `project.json` 保存项目基础信息与整体状态
+- `storyboard.json` 保存剧本规划结果
+- `tasks.json` 保存任务执行状态、错误信息、时间戳
+- 图片、音频、视频文件直接保存在项目目录下
+- 上层接口返回本地文件路径，后续如有需要再扩展为静态文件 URL
 
 ### 4.11 Database 模块
 
 职责：
 
-- 保存项目状态
-- 保存 Scene 状态
-- 保存 Task 状态
-- 保存资源元数据
-- 保存错误日志
+- 作为可选增强模块提供结构化查询能力
+- 在项目规模变大后提供更稳定的状态检索能力
+- 支持后台管理、统计分析、任务审计
+- 支持多项目、多用户、多任务并发场景
 
-推荐表：
+当前阶段建议：
+
+- 默认不实现数据库
+- 轻量级版本直接使用本地 `JSON` 文件即可
+- 只有在需要检索、筛选、分页、统计、权限隔离时再引入数据库
+
+后续可扩展为：
 
 - `projects`
 - `project_storyboards`
@@ -452,20 +494,41 @@ Orchestrator 是系统核心中枢。
 - `tasks`
 - `task_logs`
 
+适合引入数据库的场景：
+
+- 项目数量明显增多
+- 需要管理后台检索项目和任务
+- 需要多用户协作
+- 需要审计日志和历史追踪
+- 需要对失败任务做统一重试和统计分析
+
 ### 4.12 Notification 模块
 
 职责：
 
-- 项目完成通知
-- 失败通知
-- 后台告警
+- 作为可选增强模块提供任务完成与失败通知
+- 在后续版本中支持后台告警与异步消息分发
+- 服务于多人协作和运营监控场景
 
-通知方式：
+当前阶段建议：
+
+- 第一版不实现通知模块
+- 任务结果直接通过本地文件和接口返回给调用方
+- 开发阶段优先保证主流程跑通，不增加额外异步链路
+
+后续可扩展方式：
 
 - WebSocket
 - 站内通知
 - 邮件
 - IM Webhook
+
+适合引入通知模块的场景：
+
+- 任务执行时间较长，需要异步提醒
+- 存在多人协作或后台运营
+- 需要失败告警与自动值守
+- 需要把任务结果推送到外部系统
 
 ## 5. 协议设计
 
@@ -473,7 +536,25 @@ Orchestrator 是系统核心中枢。
 
 ```json
 {
-  "meta": {},
+  "meta": {
+    "protocol_name": "storyboard.json",
+    "protocol_version": "1.0.0",
+    "schema_version": "1.0.0",
+    "generated_at": "2025-01-01T00:00:00Z",
+    "generator": {
+      "system": "child-story-video-system",
+      "module": "storyboard-planner",
+      "provider": "zero-token",
+      "model": "doubao/web"
+    },
+    "idempotency_key": "storyboard_pv_0001_v1",
+    "trace_id": "trace_pv_0001_0001",
+    "source": {
+      "input_type": "story_brief",
+      "input_ref": "brief_0001",
+      "workspace": "default"
+    }
+  },
   "project": {},
   "global_style": {},
   "character_bible": {},
@@ -794,7 +875,7 @@ local/sd-xl
 
 | Provider 类型 | 用途 | 示例 |
 | --- | --- | --- |
-| `storyboard_provider` | 生成 `storyboard.json` | `doubao/web`, `qwen-web/chat`, `openai/gpt-5.4` |
+| `storyboard_provider` | 生成 `storyboard.json` | `doubao/web`, `qwen-web/chat`, `gemini-web/web` |
 | `image_provider` | 生成 Scene 图片 | `doubao/web`, `qwen-web/wanxiang`, `local/sd-xl` |
 | `tts_provider` | 生成音频 | `edge-tts/zh-CN-XiaoyiNeural`, `volc-tts/*` |
 
@@ -1092,7 +1173,7 @@ prepare_browser_session
     "image_provider_ref": "doubao/web",
     "tts_provider_ref": "edge-tts/zh-CN-XiaoyiNeural",
     "fallbacks": {
-      "storyboard_generation": ["qwen-web/chat", "openai/gpt-5.4"],
+      "storyboard_generation": ["qwen-web/chat", "gemini-web/web"],
       "image_generation": ["qwen-web/wanxiang", "local/sd-xl"]
     }
   }
@@ -1154,7 +1235,7 @@ Orchestrator 和 Worker 不需要知道页面细节，只消费统一请求与�
 
 ### 7.13 ZeroToken Web Runtime 设计
 
-参考同级目录 `openclaw-zero-token` 的实现，Web 模型接入不应只设计成一种方式。实际可用方式至少包括：
+参考本地 `src/zero-token` 的实现，Web 模型接入不应只设计成一种方式。实际可用方式至少包括：
 
 | 方式 | 说明 | 适用 Provider |
 | --- | --- | --- |
@@ -1221,7 +1302,7 @@ Debug Chrome 方式需要把浏览器会话抽象出来，避免每个 Provider 
 
 ### 7.15 Web Provider Registry 扩展
 
-为兼容 openclaw-zero-token 支持的多种 Web 方式，Provider 配置建议增加 `transport_strategy`。
+为兼容本地 `zero-token` 支持的多种 Web 方式，Provider 配置建议增加 `transport_strategy`。
 
 ```json
 {
@@ -1489,7 +1570,7 @@ load_auth_profile
 
 ### 7.20 支持的 Web Provider 初始清单
 
-结合 `openclaw-zero-token/src/zero-token/providers` 当前已有实现，首版可以按以下 Provider 规划：
+结合本地 `src/zero-token/providers` 当前已有实现，首版优先直接复用 `zero-token` 的 Provider 能力：
 
 | Provider | 推荐主策略 | 能力 | 备注 |
 | --- | --- | --- | --- |
@@ -2143,7 +2224,7 @@ PENDING
 
 ### 11.1 设计原则
 
-不要让 LLM 直接输出 `full_prompt`。LLM 只输出结构化 Prompt 片段，后端按模板稳定拼接。
+不要让 Storyboard 生成能力直接输出 `full_prompt`。`zero-token` 只输出结构化 Prompt 片段，后端按模板稳定拼接。
 
 ### 11.2 拼接公式
 
@@ -2354,11 +2435,11 @@ storage/projects/{project_id}/
 - 首版可和 Backend API 放在同一进程
 - 后续可独立为常驻调度服务
 
-### 14.3 LLM Service
+### 14.3 zero-token Service
 
 职责：
 
-- 封装 LLM API
+- 封装本地 `zero-token` 调用入口
 - 生成 `storyboard.json`
 - 执行 JSON 输出约束
 - 保存原始请求与模型响应日志
@@ -2367,6 +2448,23 @@ storage/projects/{project_id}/
 
 - 只参与 Storyboard 生成
 - 不参与后续 Worker 决策
+
+首版集成方式：
+
+- Go 后端不直接重写 `zero-token` 逻辑
+- Go 通过本地 CLI 子进程调用 `zero-token`
+- 输入使用 JSON 文件或标准输入
+- 输出统一使用 JSON 标准输出
+- 失败时返回非 0 exit code，并输出结构化错误
+
+建议调用形态：
+
+```text
+Go Backend
+  -> exec zero-token bridge CLI
+  -> 传入 provider_ref / prompt / capability / runtime_options
+  -> 接收 storyboard generation JSON result
+```
 
 ### 14.4 Image Worker Service
 
@@ -2509,7 +2607,7 @@ FFmpeg 必选。
 先做：
 
 - 输入故事文本
-- 一次 LLM 生成 `storyboard.json`
+- 一次 `zero-token` 生成 `storyboard.json`
 - JSON Schema 校验
 - Scene 级图片生成
 - Scene 级 TTS + 字幕
@@ -2558,7 +2656,7 @@ FFmpeg 必选。
 
 系统关键设计点只有两个：
 
-1. LLM 只生成一次 `storyboard.json`
+1. `zero-token` 只生成一次 `storyboard.json`
 2. 后续全部交给规则化 Worker 执行
 
 这样构建出来的是一个真正的媒体生产后端系统，而不是一个链路不可控、调试困难的 Agent 系统。
