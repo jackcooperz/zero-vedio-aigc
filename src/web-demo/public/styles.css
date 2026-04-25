@@ -246,7 +246,7 @@ button:disabled {
 
 .result-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+  grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr) minmax(280px, 0.85fr);
   gap: 16px;
   margin-top: 16px;
 }
@@ -270,6 +270,18 @@ pre {
 }
 
 .image-grid img {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--soft);
+}
+
+.video-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.video-grid video {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 8px;

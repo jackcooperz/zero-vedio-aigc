@@ -1,19 +1,55 @@
 import type { ProviderResponseParserModule } from "../parsers.js";
 import { extractSseText } from "../../utils.js";
 
-export const qwenSseParser = {
-  id: "qwen-sse",
+export const qwenWebParser = {
+  id: "qwen-web",
   parse(params) {
+    if (params.responseMode === "json") {
+      const json = params.json ?? safeParseJson(params.raw);
+      const videoUrls = extractQwenGeneratedVideosFromPolling(json);
+      return {
+        json,
+        videos: videoUrls.map((url) => ({
+          url,
+          metadata: { source: params.imageSource, parser: "qwen-web" },
+        })),
+      };
+    }
+
     const images = extractQwenGeneratedImagesFromSse(params.raw);
     return {
       text: extractSseText(params.raw),
       images: images.map((url) => ({
         url,
-        metadata: { source: params.imageSource, parser: "qwen-sse" },
+        metadata: { source: params.imageSource, parser: "qwen-web" },
       })),
     };
   },
 } satisfies ProviderResponseParserModule;
+
+export function extractQwenGeneratedVideosFromPolling(json: unknown): string[] {
+  if (!isRecord(json)) {
+    return [];
+  }
+  const data = json.data;
+  if (!isRecord(data)) {
+    return [];
+  }
+  const task = data.task;
+  if (!isRecord(task)) {
+    return [];
+  }
+  const status = task.task_status;
+  if (status !== "SUCCEEDED") {
+    return [];
+  }
+  const result = task.task_result;
+  if (!isRecord(result)) {
+    return [];
+  }
+  const videoUrl = result.video_url;
+  return typeof videoUrl === "string" && videoUrl.length > 0 ? [videoUrl] : [];
+}
 
 export function extractQwenGeneratedImagesFromSse(raw: string): string[] {
   const images = new Set<string>();
@@ -106,6 +142,14 @@ function isValidQwenImageUrl(url: string): boolean {
     return parsed.hostname.endsWith("qwenlm.ai");
   } catch {
     return false;
+  }
+}
+
+function safeParseJson(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return undefined;
   }
 }
 

@@ -28,6 +28,7 @@ function networkCapture(
     method?: string;
     contentTypeContains?: string;
     timeoutMs?: number;
+    additionalListen?: NetworkCaptureConfig["listen"];
   } = {},
 ): NetworkCaptureConfig {
   return {
@@ -41,6 +42,7 @@ function networkCapture(
         contentTypeContains: options.contentTypeContains,
         timeoutMs: options.timeoutMs ?? 180000,
       },
+      ...(options.additionalListen ?? []),
     ],
     parsers: [
       { type: "sse", events: ["message"], extract: "text" },
@@ -61,6 +63,7 @@ function webProvider(config: {
   preActions?: WebProviderConfig["domDriver"]["preActions"];
   sendActions?: WebProviderConfig["domDriver"]["sendActions"];
   waitPolicy?: WebProviderConfig["domDriver"]["waitPolicy"];
+  responseMode?: WebProviderConfig["responseMode"];
   networkCapture: NetworkCaptureConfig;
   requiresVisibleBrowser?: boolean;
 }): WebProviderConfig {
@@ -73,6 +76,7 @@ function webProvider(config: {
     capabilities: config.capabilities,
     authProfileId: config.authProfileId,
     browserProfileId: "chrome_main",
+    responseMode: config.responseMode,
     transportStrategy: {
       primary: "browser_network_capture",
       requiresCdp: true,
@@ -99,6 +103,9 @@ export function buildDefaultZeroTokenProviders(): WebProviderConfig[] {
       label: "Doubao",
       aliases: ["doubao-web"],
       authProfileId: "auth_doubao_main",
+      responseMode: {
+        "doubao.com/chat/completion": "sse",
+      },
       startUrl: "https://www.doubao.com/chat/",
       pageUrlPatterns: ["doubao.com/chat"],
       inputSelectors: ["textarea.semi-input-textarea", "[contenteditable='true']", "textarea", "[role='textbox']"],
@@ -110,7 +117,7 @@ export function buildDefaultZeroTokenProviders(): WebProviderConfig[] {
         stableRounds: 3,
       },
       networkCapture: networkCapture("doubao_chat_completion", "doubao.com/chat/completion", {
-        parser: "doubao-sse",
+        parser: "doubao-web",
         contentTypeContains: "text/event-stream",
       }),
       requiresVisibleBrowser: true,
@@ -121,12 +128,24 @@ export function buildDefaultZeroTokenProviders(): WebProviderConfig[] {
       aliases: ["qwen-web"],
       capabilities: [ZERO_TOKEN_CAPABILITIES.TEXT_IMAGE, ZERO_TOKEN_CAPABILITIES.VIDEO],
       authProfileId: "auth_qwen_main",
+      responseMode: {
+        "chat.qwen.ai/api/v2/chat/completions": "sse",
+        "chat.qwen.ai/api/v1/tasks/status/": "json",
+      },
       startUrl: "https://chat.qwen.ai/",
       inputSelectors: ["textarea.message-input-textarea", ...commonTextInputSelectors],
       sendActions: [{ type: "click", selector: "button.send-button", timeoutMs: 5000, force: true }],
       networkCapture: networkCapture("qwen_chat_completion", "chat.qwen.ai/api/v2/chat/completions", {
-        parser: "qwen-sse",
+        parser: "qwen-web",
         contentTypeContains: "text/event-stream",
+        additionalListen: [
+          {
+            name: "qwen_task_status",
+            method: "GET",
+            urlContains: "chat.qwen.ai/api/v1/tasks/status/",
+            timeoutMs: 300000,
+          },
+        ],
       }),
     }),
     webProvider({

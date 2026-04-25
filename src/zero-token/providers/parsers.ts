@@ -1,18 +1,20 @@
-import type { GeneratedImage, ProviderResponseParser } from "../types.js";
+import type { GeneratedImage, GeneratedVideo, ProviderResponseMode, ProviderResponseParser } from "../types.js";
 import { extractImageUrlsDeep, extractSseText } from "../utils.js";
-import { doubaoSseParser } from "./doubao/parser.js";
-import { qwenSseParser } from "./qwen/parser.js";
+import { doubaoWebParser } from "./doubao/parser.js";
+import { qwenWebParser } from "./qwen/parser.js";
 
 export type ParsedProviderResponse = {
   text?: string;
+  json?: unknown;
   images?: GeneratedImage[];
+  videos?: GeneratedVideo[];
 };
 
 export type ProviderResponseParserParams = {
   parser?: ProviderResponseParser;
   raw: string;
   json?: unknown;
-  responseMode?: "json" | "text" | "sse" | "stream";
+  responseMode?: ProviderResponseMode;
   imageSource: string;
 };
 
@@ -27,7 +29,7 @@ const genericParser = {
 } satisfies ProviderResponseParserModule;
 
 const RESPONSE_PARSERS = Object.fromEntries(
-  [genericParser, doubaoSseParser, qwenSseParser].map((parser) => [parser.id, parser.parse]),
+  [genericParser, doubaoWebParser, qwenWebParser].map((parser) => [parser.id, parser.parse]),
 ) as Record<ProviderResponseParser, ProviderResponseParserModule["parse"]>;
 
 export function parseProviderResponse(params: ProviderResponseParserParams): ParsedProviderResponse {

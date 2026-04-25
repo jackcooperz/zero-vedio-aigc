@@ -6,6 +6,7 @@ const promptInput = document.querySelector("#promptInput");
 const imageInput = document.querySelector("#imageInput");
 const resultBox = document.querySelector("#resultBox");
 const imageGrid = document.querySelector("#imageGrid");
+const videoGrid = document.querySelector("#videoGrid");
 const statusText = document.querySelector("#statusText");
 const refreshBtn = document.querySelector("#refreshBtn");
 const generateForm = document.querySelector("#generateForm");
@@ -99,6 +100,7 @@ async function loadProviders() {
     renderProviders();
     resultBox.textContent = JSON.stringify(data, null, 2);
     imageGrid.innerHTML = `<p class="empty">Images returned by image providers will appear here.</p>`;
+    videoGrid.innerHTML = `<p class="empty">Videos returned by video providers will appear here.</p>`;
     statusText.textContent = `${providers.length} providers available`;
   } catch (error) {
     providers = [];
@@ -121,6 +123,7 @@ async function runGenerate(event) {
   runBtn.disabled = true;
   statusText.textContent = `Running ${providerRef}...`;
   imageGrid.innerHTML = `<p class="empty">Waiting for result...</p>`;
+  videoGrid.innerHTML = `<p class="empty">Waiting for result...</p>`;
 
   try {
     const inputImages = await Promise.all(selectedImages.map((item) => readFileAsPayload(item.file)));
@@ -138,7 +141,9 @@ async function runGenerate(event) {
     const data = await readJsonResponse(res);
     resultBox.textContent = JSON.stringify(data, null, 2);
     const images = data.output?.images ?? [];
+    const videos = data.output?.videos ?? [];
     imageGrid.innerHTML = "";
+    videoGrid.innerHTML = "";
     const visibleImages = images.filter((image) => image.url);
     if (visibleImages.length) {
       for (const image of visibleImages) {
@@ -149,6 +154,19 @@ async function runGenerate(event) {
       }
     } else {
       imageGrid.innerHTML = `<p class="empty">No images in this result.</p>`;
+    }
+
+    const visibleVideos = videos.filter((video) => video.url);
+    if (visibleVideos.length) {
+      for (const videoItem of visibleVideos) {
+        const video = document.createElement("video");
+        video.src = videoItem.url;
+        video.controls = true;
+        video.preload = "metadata";
+        videoGrid.appendChild(video);
+      }
+    } else {
+      videoGrid.innerHTML = `<p class="empty">No videos in this result.</p>`;
     }
     statusText.textContent = res.ok ? "Done" : "Request failed";
   } catch (error) {

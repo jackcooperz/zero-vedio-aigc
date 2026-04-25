@@ -7,7 +7,9 @@ export type ZeroTokenCapability = (typeof ZERO_TOKEN_CAPABILITIES)[keyof typeof 
 
 export type ZeroTokenTransport = "browser_network_capture";
 
-export type ProviderResponseParser = "generic" | "doubao-sse" | "qwen-sse";
+export type ProviderResponseMode = "json" | "text" | "sse" | "stream";
+
+export type ProviderResponseParser = "generic" | "doubao-web" | "qwen-web";
 
 export type ProviderRef = {
   provider: string;
@@ -98,6 +100,7 @@ export type WebProviderConfig = {
   capabilities?: ZeroTokenCapability[];
   authProfileId?: string;
   browserProfileId?: string;
+  responseMode?: Record<string, ProviderResponseMode>;
   transportStrategy: TransportStrategy;
   models: ProviderModel[];
   domDriver: DomDriverConfig;
@@ -143,6 +146,14 @@ export type GeneratedImage = {
   metadata?: Record<string, unknown>;
 };
 
+export type GeneratedVideo = {
+  url?: string;
+  localPath?: string;
+  buffer?: Uint8Array;
+  mimeType?: string;
+  metadata?: Record<string, unknown>;
+};
+
 export type ZeroTokenResult = {
   requestId: string;
   providerRef: string;
@@ -152,6 +163,7 @@ export type ZeroTokenResult = {
     text?: string;
     json?: unknown;
     images?: GeneratedImage[];
+    videos?: GeneratedVideo[];
   };
   debug?: Record<string, unknown>;
   usage: {

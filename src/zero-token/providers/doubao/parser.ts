@@ -8,8 +8,8 @@ export type DoubaoGeneratedImage = {
   height?: number;
 };
 
-export const doubaoSseParser = {
-  id: "doubao-sse",
+export const doubaoWebParser = {
+  id: "doubao-web",
   parse(params) {
     const doubaoImages = extractDoubaoGeneratedImagesFromSse(params.raw);
     const fallbackImageUrls = doubaoImages.length > 0 ? [] : extractImageUrlsDeep(params.raw);
@@ -22,7 +22,7 @@ export const doubaoSseParser = {
           height: image.height,
           metadata: {
             source: params.imageSource,
-            parser: "doubao-sse",
+            parser: "doubao-web",
             ...(image.key ? { key: image.key } : {}),
           },
         })),
