@@ -1,4 +1,4 @@
-import type { NetworkCaptureConfig, ProviderModel, WebProviderConfig } from "../types.js";
+import { ZERO_TOKEN_CAPABILITIES, type NetworkCaptureConfig, type ProviderModel, type WebProviderConfig } from "../types.js";
 
 const commonTextInputSelectors = [
   "textarea",
@@ -53,6 +53,7 @@ function webProvider(config: {
   providerId: string;
   label: string;
   aliases?: string[];
+  capabilities?: WebProviderConfig["capabilities"];
   authProfileId: string;
   startUrl: string;
   inputSelectors?: string[];
@@ -69,6 +70,7 @@ function webProvider(config: {
     type: "web",
     enabled: true,
     aliases: config.aliases,
+    capabilities: config.capabilities,
     authProfileId: config.authProfileId,
     browserProfileId: "chrome_main",
     transportStrategy: {
@@ -117,6 +119,7 @@ export function buildDefaultZeroTokenProviders(): WebProviderConfig[] {
       providerId: "qwen",
       label: "Qwen",
       aliases: ["qwen-web"],
+      capabilities: [ZERO_TOKEN_CAPABILITIES.TEXT_IMAGE, ZERO_TOKEN_CAPABILITIES.VIDEO],
       authProfileId: "auth_qwen_main",
       startUrl: "https://chat.qwen.ai/",
       inputSelectors: ["textarea.message-input-textarea", ...commonTextInputSelectors],

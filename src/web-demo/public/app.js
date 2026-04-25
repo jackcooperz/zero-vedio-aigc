@@ -1,5 +1,7 @@
 const providerList = document.querySelector("#providerList");
 const providerSelect = document.querySelector("#providerSelect");
+const capabilityField = document.querySelector("#capabilityField");
+const capabilitySelect = document.querySelector("#capabilitySelect");
 const promptInput = document.querySelector("#promptInput");
 const imageInput = document.querySelector("#imageInput");
 const resultBox = document.querySelector("#resultBox");
@@ -57,6 +59,29 @@ function renderProviderSelection() {
   providerList.querySelectorAll("button").forEach((button) => {
     button.dataset.active = String(button.dataset.provider === providerSelect.value);
   });
+  renderCapabilityOptions();
+}
+
+function renderCapabilityOptions() {
+  const capabilities = activeProvider()?.capabilities ?? [];
+  if (!capabilities.length) {
+    capabilityField.classList.add("hidden");
+    capabilitySelect.innerHTML = "";
+    return;
+  }
+  capabilityField.classList.remove("hidden");
+  const previousValue = capabilitySelect.value;
+  capabilitySelect.innerHTML = capabilities
+    .map((capability) => `<option value="${capability}">${formatCapability(capability)}</option>`)
+    .join("");
+  capabilitySelect.value = capabilities.includes(previousValue) ? previousValue : capabilities[0];
+}
+
+function formatCapability(capability) {
+  return capability
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" / ");
 }
 
 async function loadProviders() {
@@ -104,6 +129,7 @@ async function runGenerate(event) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         providerRef,
+        capability: capabilitySelect.value || undefined,
         prompt: promptInput.value,
         images: inputImages,
         count: 1,

@@ -1,4 +1,9 @@
-export type ZeroTokenCapability = "storyboard_generation" | "image_generation" | "text_generation";
+export const ZERO_TOKEN_CAPABILITIES = {
+  TEXT_IMAGE: "text_image",
+  VIDEO: "video",
+} as const;
+
+export type ZeroTokenCapability = (typeof ZERO_TOKEN_CAPABILITIES)[keyof typeof ZERO_TOKEN_CAPABILITIES];
 
 export type ZeroTokenTransport = "browser_network_capture";
 
@@ -90,6 +95,7 @@ export type WebProviderConfig = {
   type: "web";
   enabled: boolean;
   aliases?: string[];
+  capabilities?: ZeroTokenCapability[];
   authProfileId?: string;
   browserProfileId?: string;
   transportStrategy: TransportStrategy;

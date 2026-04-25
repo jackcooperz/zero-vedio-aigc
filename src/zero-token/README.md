@@ -35,7 +35,7 @@ const runtime = new ZeroTokenRuntime({
 const result = await runtime.generate({
   requestId: "req_001",
   providerRef: "doubao/web",
-  capability: "text_generation",
+  capability: "text_image",
   input: {
     prompt: "children storybook illustration, a cute cloud floating in the night sky",
     aspectRatio: "16:9",
@@ -53,7 +53,7 @@ console.log(result.output.images);
 const result = await runtime.generate({
   requestId: "req_storyboard_001",
   providerRef: "qwen/web",
-  capability: "storyboard_generation",
+  capability: "text_image",
   input: {
     prompt: "请将下面的儿童故事转换为严格 JSON storyboard...",
   },
@@ -151,6 +151,7 @@ http://127.0.0.1:4317
 页面提供：
 
 - Provider 列表
+- Provider 能力标记：`text_image` / `video`
 - Prompt 输入
 - 结果 JSON 预览
 - 图片结果预览

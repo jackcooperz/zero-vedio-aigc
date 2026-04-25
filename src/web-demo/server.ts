@@ -7,6 +7,7 @@ import {
   buildDefaultBrowserProfiles,
   buildDefaultZeroTokenProviders,
   type AuthProfile,
+  type ZeroTokenCapability,
 } from "../zero-token/index.js";
 
 const rootDir = fileURLToPath(new URL("../../", import.meta.url));
@@ -109,6 +110,7 @@ function summarizeProviders() {
     providerId: provider.providerId,
     label: provider.label,
     aliases: provider.aliases ?? [],
+    capabilities: provider.capabilities,
     transportStrategy: provider.transportStrategy,
     models: provider.models,
   }));
@@ -132,6 +134,7 @@ async function handleApi(req: any, res: any, url: URL) {
   if (req.method === "POST" && url.pathname === "/api/generate") {
     const body = (await readBody(req)) as {
       providerRef?: string;
+      capability?: ZeroTokenCapability;
       prompt?: string;
       images?: Array<{
         name?: string;
@@ -152,7 +155,7 @@ async function handleApi(req: any, res: any, url: URL) {
       const result = await runtime.generate({
         requestId: `web_${Date.now()}`,
         providerRef: body.providerRef,
-        capability: "text_generation",
+        capability: body.capability,
         transportPreference: body.transportPreference as any,
         input: {
           prompt: body.prompt,

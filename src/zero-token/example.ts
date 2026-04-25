@@ -1,4 +1,5 @@
 import {
+  ZERO_TOKEN_CAPABILITIES,
   ZeroTokenRuntime,
   buildDefaultBrowserProfiles,
   buildDefaultZeroTokenProviders,
@@ -17,7 +18,7 @@ export async function generateStoryboardWithProvider(providerRef: string, prompt
   return runtime.generate({
     requestId: `storyboard_${Date.now()}`,
     providerRef,
-    capability: "storyboard_generation",
+    capability: ZERO_TOKEN_CAPABILITIES.TEXT_IMAGE,
     input: { prompt },
   });
 }
@@ -27,7 +28,7 @@ export async function generateImageWithProvider(providerRef: string, prompt: str
   return runtime.generate({
     requestId: `image_${Date.now()}`,
     providerRef,
-    capability: "image_generation",
+    capability: ZERO_TOKEN_CAPABILITIES.TEXT_IMAGE,
     input: {
       prompt,
       aspectRatio: "16:9",
@@ -36,4 +37,3 @@ export async function generateImageWithProvider(providerRef: string, prompt: str
     },
   });
 }
-
