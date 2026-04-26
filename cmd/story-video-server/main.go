@@ -762,11 +762,43 @@ func (a *app) runZeroTokenStoryboard(project projectFile, req generateStoryboard
 	if !resp.OK {
 		return nil, fmt.Errorf("zero-token bridge error: %s %s", resp.Name, resp.Error)
 	}
+	if writeErr := a.writeStoryboardDebugOutput(project.ProjectID, resp.Result.Output); writeErr != nil {
+		log.Printf("write storyboard debug output failed for %s: %v", project.ProjectID, writeErr)
+	}
 
 	if len(resp.Result.Output.JSON) > 0 && string(resp.Result.Output.JSON) != "null" {
-		return normalizeJSON(resp.Result.Output.JSON)
+		normalized, err := normalizeJSON(resp.Result.Output.JSON)
+		if err != nil {
+			return nil, err
+		}
+		if writeErr := os.WriteFile(a.storyboardExtractedPath(project.ProjectID), append(normalized, '\n'), 0o644); writeErr != nil {
+			log.Printf("write storyboard extracted json failed for %s: %v", project.ProjectID, writeErr)
+		}
+		return normalized, nil
 	}
-	return extractJSONObject(resp.Result.Output.Text)
+	extracted, err := extractJSONObject(resp.Result.Output.Text)
+	if err != nil {
+		return nil, err
+	}
+	if writeErr := os.WriteFile(a.storyboardExtractedPath(project.ProjectID), append(extracted, '\n'), 0o644); writeErr != nil {
+		log.Printf("write storyboard extracted json failed for %s: %v", project.ProjectID, writeErr)
+	}
+	return extracted, nil
+}
+
+func (a *app) writeStoryboardDebugOutput(projectID string, output zeroTokenGenerateOutput) error {
+	if err := os.WriteFile(a.storyboardRawTextPath(projectID), []byte(output.Text), 0o644); err != nil {
+		return err
+	}
+	trimmedJSON := bytes.TrimSpace(output.JSON)
+	if len(trimmedJSON) == 0 || string(trimmedJSON) == "null" {
+		return nil
+	}
+	rawJSON, err := normalizeJSON(trimmedJSON)
+	if err != nil {
+		rawJSON = append([]byte{}, trimmedJSON...)
+	}
+	return os.WriteFile(a.storyboardRawJSONPath(projectID), append(rawJSON, '\n'), 0o644)
 }
 
 func (a *app) readProject(projectID string) (projectFile, error) {
@@ -791,6 +823,18 @@ func (a *app) writeTasks(projectID string, tasks []taskFile) error {
 
 func (a *app) storyboardValidationPath(projectID string) string {
 	return filepath.Join(a.projectsDir, projectID, "storyboard.validation.json")
+}
+
+func (a *app) storyboardRawTextPath(projectID string) string {
+	return filepath.Join(a.projectsDir, projectID, "storyboard.raw.txt")
+}
+
+func (a *app) storyboardRawJSONPath(projectID string) string {
+	return filepath.Join(a.projectsDir, projectID, "storyboard.raw.json")
+}
+
+func (a *app) storyboardExtractedPath(projectID string) string {
+	return filepath.Join(a.projectsDir, projectID, "storyboard.extracted.json")
 }
 
 func (a *app) sceneIndexPath(projectID string) string {
@@ -2640,8 +2684,56 @@ func buildStoryboardPrompt(project projectFile) string {
 1. 只返回 JSON，不要返回 markdown，不要解释。
 2. 顶层必须包含：meta, project, global_style, character_bible, audio_profile, video_profile, render_rules, scenes。
 3. scenes 必须是数组，每个 scene 必须包含：scene_id, sequence, title, story_function, narration, subtitle, duration_hint_sec, characters, objects, environment, visual, prompt, audio, effects。
-4. prompt.full_prompt 先返回空字符串。
-5. 内容适合儿童故事视频，语气温和，结构清晰。
+4. environment 必须是 object，不能是 string。visual 必须是 object，不能是 string。effects 必须是 object，不能是 string。
+5. prompt 必须是 object，并且必须包含：subject_prompt, scene_prompt, full_prompt。subject_prompt 和 scene_prompt 必须为非空字符串；full_prompt 先返回空字符串。
+6. audio 必须是 object。
+7. 内容适合儿童故事视频，语气温和，结构清晰。
+8. JSON 的第一个字符必须是 {，最后一个字符必须是 }。
+
+scene 的最小合法结构示例：
+{
+  "scene_id": "s01",
+  "sequence": 1,
+  "title": "场景标题",
+  "story_function": "这一幕承担的叙事作用",
+  "narration": "旁白全文",
+  "subtitle": "字幕文本",
+  "duration_hint_sec": 8,
+  "characters": ["c01"],
+  "objects": ["星星瓶"],
+  "environment": {
+    "location": "夜空",
+    "time_of_day": "夜晚",
+    "weather": "晴朗",
+    "atmosphere": "梦幻温馨"
+  },
+  "visual": {
+    "shot_type": "全景",
+    "camera_motion": "缓慢推进",
+    "composition": "主角位于画面中央",
+    "action": "小云朵轻轻漂浮，望向小星星"
+  },
+  "prompt": {
+    "subject_prompt": "主角与关键物体的画面描述",
+    "scene_prompt": "场景环境、镜头和氛围描述",
+    "full_prompt": ""
+  },
+  "audio": {
+    "bgm": "背景音乐描述",
+    "voice": "人声描述",
+    "sound_effect": "音效描述"
+  },
+  "effects": {
+    "motion": "元素运动效果",
+    "lighting": "光效描述",
+    "post_process": "后期风格描述"
+  }
+}
+
+注意：
+- 不要把 environment、visual、effects 写成一句话字符串。
+- 不要遗漏 prompt.subject_prompt 或 prompt.scene_prompt。
+- character_bible、audio_profile、video_profile、render_rules 也要保持 object/array 结构，不要输出自然语言段落。
 
 项目信息：
 - project_id: %s
@@ -2673,13 +2765,56 @@ func extractJSONObject(raw string) ([]byte, error) {
 			candidate = strings.TrimSpace(candidate)
 		}
 	}
-
-	start := strings.Index(candidate, "{")
-	end := strings.LastIndex(candidate, "}")
-	if start < 0 || end <= start {
-		return nil, errors.New("storyboard JSON object not found in zero-token output")
+	var (
+		start      = -1
+		depth      = 0
+		inString   = false
+		escapeNext = false
+		lastErr    error
+	)
+	for i := 0; i < len(candidate); i++ {
+		char := candidate[i]
+		if inString {
+			if escapeNext {
+				escapeNext = false
+				continue
+			}
+			if char == '\\' {
+				escapeNext = true
+				continue
+			}
+			if char == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch char {
+		case '"':
+			inString = true
+		case '{':
+			if depth == 0 {
+				start = i
+			}
+			depth++
+		case '}':
+			if depth == 0 {
+				continue
+			}
+			depth--
+			if depth == 0 && start >= 0 {
+				if normalized, err := normalizeJSON([]byte(candidate[start : i+1])); err == nil {
+					return normalized, nil
+				} else {
+					lastErr = err
+				}
+				start = -1
+			}
+		}
 	}
-	return normalizeJSON([]byte(candidate[start : end+1]))
+	if lastErr != nil {
+		return nil, fmt.Errorf("storyboard JSON object not found in zero-token output: %w", lastErr)
+	}
+	return nil, errors.New("storyboard JSON object not found in zero-token output")
 }
 
 func normalizeJSON(raw []byte) ([]byte, error) {

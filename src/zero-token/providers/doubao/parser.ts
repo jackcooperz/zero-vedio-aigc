@@ -13,8 +13,10 @@ export const doubaoWebParser = {
   parse(params) {
     const doubaoImages = extractDoubaoGeneratedImagesFromSse(params.raw);
     const fallbackImageUrls = doubaoImages.length > 0 ? [] : extractImageUrlsDeep(params.raw);
+    const doubaoText = extractDoubaoSseText(params.raw);
+    const genericText = extractSseText(params.raw);
     return {
-      text: extractDoubaoSseText(params.raw) || extractSseText(params.raw),
+      text: pickPreferredDoubaoText(doubaoText, genericText),
       images: [
         ...doubaoImages.map((image) => ({
           url: image.url,
@@ -36,23 +38,176 @@ export const doubaoWebParser = {
 } satisfies ProviderResponseParserModule;
 
 export function extractDoubaoSseText(raw: string): string {
-  const chunks: string[] = [];
+  const deltaChunks: string[] = [];
+  const streamLeadTextChunks: string[] = [];
+  const streamLeadTtsChunks: string[] = [];
+  const streamPatchTextChunks: string[] = [];
+  const streamPatchTtsChunks: string[] = [];
+
   for (const event of parseSseEvents(raw)) {
-    if (event.event !== "CHUNK_DELTA") {
-      continue;
-    }
     let data: unknown;
     try {
       data = JSON.parse(event.data);
     } catch {
       continue;
     }
-    if (!isRecord(data) || typeof data.text !== "string") {
+    switch (event.event) {
+    case "CHUNK_DELTA":
+      if (isRecord(data) && typeof data.text === "string") {
+        deltaChunks.push(repairMojibakeText(data.text));
+      }
+      break;
+    case "STREAM_MSG_NOTIFY":
+      streamLeadTextChunks.push(...extractDoubaoContentBlockTexts(data));
+      streamLeadTtsChunks.push(...extractDoubaoTtsTexts(data));
+      break;
+    case "STREAM_CHUNK":
+      streamPatchTextChunks.push(...extractDoubaoPatchContentBlockTexts(data));
+      streamPatchTtsChunks.push(...extractDoubaoPatchTtsTexts(data));
+      break;
+    default:
       continue;
     }
-    chunks.push(repairMojibakeText(data.text));
   }
-  return chunks.join("");
+
+  const leadText = streamLeadTextChunks.join("");
+  const leadTts = streamLeadTtsChunks.join("");
+  const patchText = streamPatchTextChunks.join("");
+  const patchTts = streamPatchTtsChunks.join("");
+  const deltaText = deltaChunks.join("");
+
+  return pickPreferredDoubaoText(
+    `${leadText}${deltaText}`,
+    `${leadTts}${deltaText}`,
+    `${leadText}${patchText}`,
+    `${leadTts}${patchTts}`,
+    patchText,
+    patchTts,
+    deltaText,
+  );
+}
+
+function pickPreferredDoubaoText(...values: string[]): string {
+  const candidates = values
+    .map((text) => normalizeExtractedText(text))
+    .filter((text, index, all) => text && all.indexOf(text) === index);
+  if (candidates.length === 0) {
+    return "";
+  }
+
+  let best = candidates[0];
+  let bestScore = scoreExtractedText(best);
+  for (const candidate of candidates.slice(1)) {
+    const score = scoreExtractedText(candidate);
+    if (score > bestScore || (score === bestScore && candidate.length > best.length)) {
+      best = candidate;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+function normalizeExtractedText(text: string): string {
+  return text.replace(/\r\n/g, "\n").trim();
+}
+
+function scoreExtractedText(text: string): number {
+  if (!text) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  let score = Math.min(text.length, 20000) / 1000;
+  if (looksLikeStrictJSONObject(text)) {
+    score += 200;
+  }
+  if (looksLikeStoryboardRoot(text)) {
+    score += 120;
+  }
+  if (looksLikeIncompleteStoryboardBody(text)) {
+    score -= 80;
+  }
+  if (canParseJSON(text)) {
+    score += 300;
+  }
+  return score;
+}
+
+function looksLikeStrictJSONObject(text: string): boolean {
+  const trimmed = text.trim();
+  return trimmed.startsWith("{") && trimmed.endsWith("}");
+}
+
+function looksLikeStoryboardRoot(text: string): boolean {
+  return /"meta"\s*:/.test(text) && /"project"\s*:/.test(text) && /"scenes"\s*:/.test(text);
+}
+
+function looksLikeIncompleteStoryboardBody(text: string): boolean {
+  const trimmed = text.trimStart();
+  return trimmed.startsWith('"meta"') || trimmed.startsWith('"project"') || trimmed.startsWith('"scenes"');
+}
+
+function canParseJSON(text: string): boolean {
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function extractDoubaoContentBlockTexts(value: unknown): string[] {
+  const records = isRecord(value) && isRecord(value.content)
+    ? normalizeContentBlocks(value.content.content_block)
+    : isRecord(value)
+      ? normalizeContentBlocks(value.content_block)
+      : [];
+  return records
+    .map((item) => readNestedString(item, ["content", "text_block", "text"]))
+    .filter((text): text is string => typeof text === "string")
+    .map(repairMojibakeText);
+}
+
+function extractDoubaoTtsTexts(value: unknown): string[] {
+  if (!isRecord(value)) {
+    return [];
+  }
+  const ttsContent = isRecord(value.content) ? value.content.tts_content : value.tts_content;
+  return typeof ttsContent === "string" && ttsContent.length > 0 ? [repairMojibakeText(ttsContent)] : [];
+}
+
+function extractDoubaoPatchContentBlockTexts(value: unknown): string[] {
+  if (!isRecord(value) || !Array.isArray(value.patch_op)) {
+    return [];
+  }
+  const chunks: string[] = [];
+  for (const patch of value.patch_op) {
+    if (!isRecord(patch) || !isRecord(patch.patch_value)) {
+      continue;
+    }
+    chunks.push(...extractDoubaoContentBlockTexts(patch.patch_value));
+  }
+  return chunks;
+}
+
+function extractDoubaoPatchTtsTexts(value: unknown): string[] {
+  if (!isRecord(value) || !Array.isArray(value.patch_op)) {
+    return [];
+  }
+  const chunks: string[] = [];
+  for (const patch of value.patch_op) {
+    if (!isRecord(patch) || !isRecord(patch.patch_value)) {
+      continue;
+    }
+    chunks.push(...extractDoubaoTtsTexts(patch.patch_value));
+  }
+  return chunks;
+}
+
+function normalizeContentBlocks(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is Record<string, unknown> => isRecord(item));
 }
 
 export function extractDoubaoGeneratedImagesFromSse(raw: string): DoubaoGeneratedImage[] {

@@ -8,5 +8,114 @@
     "created_at": "2026-04-25T17:47:12Z",
     "updated_at": "2026-04-25T17:47:32Z",
     "finished_at": "2026-04-25T17:47:32Z"
+  },
+  {
+    "task_id": "task_1777203602586772497",
+    "kind": "storyboard_generation",
+    "status": "success",
+    "message": "Storyboard saved, but validation failed",
+    "created_at": "2026-04-26T11:40:02Z",
+    "updated_at": "2026-04-26T11:40:36Z",
+    "finished_at": "2026-04-26T11:40:36Z"
+  },
+  {
+    "task_id": "task_1777208088275180190",
+    "kind": "storyboard_generation",
+    "status": "failed",
+    "message": "Calling local zero-token bridge CLI",
+    "error": "zero-token bridge failed: exit status 1: {\n  \"ok\": false,\n  \"error\": \"browserType.connectOverCDP: Timeout 30000ms exceeded.\\nCall log:\\n\\u001b[2m  - \u003cws connecting\u003e ws://127.0.0.1:9222/devtools/browser/da1bae80-05b9-4b3c-bbce-2f1ed4a9b325\\u001b[22m\\n\\u001b[2m  - \u003cws connected\u003e ws://127.0.0.1:9222/devtools/browser/da1bae80-05b9-4b3c-bbce-2f1ed4a9b325\\u001b[22m\\n\",\n  \"name\": \"TimeoutError\"\n}",
+    "created_at": "2026-04-26T12:54:48Z",
+    "updated_at": "2026-04-26T12:55:16Z",
+    "finished_at": "2026-04-26T12:55:16Z"
+  },
+  {
+    "task_id": "task_1777208145778720870",
+    "kind": "storyboard_generation",
+    "status": "success",
+    "message": "Storyboard saved, but validation failed",
+    "created_at": "2026-04-26T12:55:45Z",
+    "updated_at": "2026-04-26T12:56:15Z",
+    "finished_at": "2026-04-26T12:56:15Z"
+  },
+  {
+    "task_id": "task_1777208919805359856",
+    "kind": "storyboard_generation",
+    "status": "success",
+    "message": "Storyboard saved, but validation failed",
+    "created_at": "2026-04-26T13:08:39Z",
+    "updated_at": "2026-04-26T13:09:08Z",
+    "finished_at": "2026-04-26T13:09:08Z"
+  },
+  {
+    "task_id": "task_1777209093714338470",
+    "kind": "storyboard_generation",
+    "status": "success",
+    "message": "Storyboard saved, but validation failed",
+    "created_at": "2026-04-26T13:11:33Z",
+    "updated_at": "2026-04-26T13:12:01Z",
+    "finished_at": "2026-04-26T13:12:01Z"
+  },
+  {
+    "task_id": "task_1777209643646071986",
+    "kind": "storyboard_generation",
+    "status": "success",
+    "message": "Storyboard saved, but validation failed",
+    "created_at": "2026-04-26T13:20:43Z",
+    "updated_at": "2026-04-26T13:24:32Z",
+    "finished_at": "2026-04-26T13:24:32Z"
+  },
+  {
+    "task_id": "task_1777210397735168073",
+    "kind": "storyboard_generation",
+    "status": "success",
+    "message": "Storyboard saved and validated",
+    "created_at": "2026-04-26T13:33:17Z",
+    "updated_at": "2026-04-26T13:33:57Z",
+    "finished_at": "2026-04-26T13:33:57Z"
+  },
+  {
+    "task_id": "task_1777210437530248279",
+    "kind": "storyboard_validation",
+    "status": "success",
+    "message": "Storyboard validation passed with 1 scenes",
+    "created_at": "2026-04-26T13:33:57Z",
+    "updated_at": "2026-04-26T13:33:57Z",
+    "finished_at": "2026-04-26T13:33:57Z"
+  },
+  {
+    "task_id": "task_1777210437530250643",
+    "kind": "scene_task_split",
+    "status": "success",
+    "message": "Generated 3 scene tasks",
+    "created_at": "2026-04-26T13:33:57Z",
+    "updated_at": "2026-04-26T13:33:57Z",
+    "finished_at": "2026-04-26T13:33:57Z"
+  },
+  {
+    "task_id": "task_1777210437530085435",
+    "kind": "scene_image_generation",
+    "scene_id": "s01",
+    "status": "pending",
+    "message": "Scene image generation queued",
+    "created_at": "2026-04-26T13:33:57Z",
+    "updated_at": "2026-04-26T13:33:57Z"
+  },
+  {
+    "task_id": "task_1777210437530093994",
+    "kind": "scene_audio_generation",
+    "scene_id": "s01",
+    "status": "pending",
+    "message": "Scene audio generation queued",
+    "created_at": "2026-04-26T13:33:57Z",
+    "updated_at": "2026-04-26T13:33:57Z"
+  },
+  {
+    "task_id": "task_1777210437530094886",
+    "kind": "scene_video_compositing",
+    "scene_id": "s01",
+    "status": "pending",
+    "message": "Scene video compositing queued",
+    "created_at": "2026-04-26T13:33:57Z",
+    "updated_at": "2026-04-26T13:33:57Z"
   }
 ]

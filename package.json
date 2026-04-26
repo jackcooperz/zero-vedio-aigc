@@ -5,10 +5,10 @@
   "type": "module",
   "scripts": {
     "chrome:debug": "bash scripts/start-chrome-debug.sh",
-    "dev:web": "npm run build && node dist/web-demo/server.js",
-    "serve:web": "node dist/web-demo/server.js",
-    "dev:story-video": "npm run build && go run ./cmd/story-video-server",
-    "start:story-video-server": "npm run build && go run ./cmd/story-video-server",
+    "dev:web": "npm run build && npm run chrome:debug && node dist/web-demo/server.js",
+    "serve:web": "npm run build && npm run chrome:debug && node dist/web-demo/server.js",
+    "dev:story-video": "npm run build && npm run chrome:debug && go run ./cmd/story-video-server",
+    "start:story-video-server": "npm run build && npm run chrome:debug && go run ./cmd/story-video-server",
     "build:story-video": "go build ./cmd/story-video-server",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.json"

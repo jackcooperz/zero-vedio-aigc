@@ -3,7 +3,12 @@
   "title": "小云朵的星星收集之旅",
   "story": "在很远很远的天空上，住着一朵软乎乎的小云朵，名字叫棉棉。一天晚上，它决定帮助迷路的小星星回家。",
   "provider_ref": "doubao/web",
-  "status": "storyboard_failed",
+  "status": "scene_tasks_ready",
+  "storyboard_path": "/home/star/zero-video-factory/projects/pv_1777139224872/storyboard.json",
+  "storyboard_valid": true,
+  "storyboard_validation_path": "/home/star/zero-video-factory/projects/pv_1777139224872/storyboard.validation.json",
+  "storyboard_generated_at": "2026-04-26T13:33:57Z",
+  "scene_count": 1,
   "created_at": "2026-04-25T17:47:04Z",
-  "updated_at": "2026-04-25T17:47:32Z"
+  "updated_at": "2026-04-26T13:33:57Z"
 }

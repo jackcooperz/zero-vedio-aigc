@@ -1,0 +1,48 @@
+{
+  "project_id": "pv_1777139224872",
+  "scene_id": "s01",
+  "sequence": 1,
+  "title": "小云朵棉棉决意帮助迷路小星星",
+  "story_function": "开篇交代故事背景、主角身份，引出帮助小星星归家的核心主线剧情",
+  "narration": "在很远很远的天空上，住着一朵软乎乎的小云朵，名字叫棉棉。一天晚上，它决定帮助迷路的小星星回家。",
+  "subtitle": "善良的小云朵棉棉，决定帮助迷路的小星星找到温暖的家。",
+  "duration_hint_sec": 8,
+  "characters": [
+    "c01",
+    "c02"
+  ],
+  "objects": [],
+  "environment": {
+    "atmosphere": "静谧梦幻、温馨治愈",
+    "location": "高空星空天际",
+    "time_of_day": "深夜",
+    "weather": "晴朗无云"
+  },
+  "visual": {
+    "action": "小云朵棉棉轻轻浮动，温柔注视着身旁孤单的小星星",
+    "camera_motion": "缓慢匀速推进",
+    "composition": "小云朵与小星星居于画面视觉中心",
+    "shot_type": "全景慢镜头"
+  },
+  "prompt": {
+    "full_prompt": "",
+    "scene_prompt": "深邃梦幻的深蓝色夜空，布满细碎闪烁的星光，整体画面童真治愈，色调柔和温暖",
+    "subject_prompt": "雪白蓬松软萌的小云朵棉棉，搭配一颗光芒微弱、孤单可爱的金黄色小星星"
+  },
+  "audio": {
+    "bgm": "轻柔舒缓的星空治愈纯音乐",
+    "sound_effect": "轻柔晚风流动声、细碎星光闪烁音效",
+    "voice": "温柔童真、平缓亲切的儿童旁白"
+  },
+  "effects": {
+    "lighting": "全局温柔暖光柔光，星星自带微弱暖黄星光",
+    "motion": "云朵轻微上下浮动，星星缓慢眨眼闪烁",
+    "post_process": "画面柔化处理，低饱和马卡龙色调，氛围感拉满"
+  },
+  "status": "pending",
+  "image_status": "pending",
+  "audio_status": "pending",
+  "compose_status": "pending",
+  "created_at": "2026-04-26T13:33:57Z",
+  "updated_at": "2026-04-26T13:33:57Z"
+}
