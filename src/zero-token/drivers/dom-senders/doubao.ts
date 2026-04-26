@@ -7,6 +7,68 @@ function isDisabled(value: unknown): boolean {
   return value === true || value === "true";
 }
 
+function normalizePromptText(value: string): string {
+  return value.replace(/\r\n/g, "\n");
+}
+
+async function readDoubaoInputValue(input: any): Promise<string> {
+  return input.evaluate((element: HTMLTextAreaElement | HTMLElement) => {
+    if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
+      return element.value ?? "";
+    }
+    return element.textContent ?? "";
+  }).catch(() => "");
+}
+
+async function verifyDoubaoPrompt(input: any, prompt: string): Promise<boolean> {
+  const actual = normalizePromptText(await readDoubaoInputValue(input));
+  return actual === normalizePromptText(prompt);
+}
+
+async function writeDoubaoPrompt(input: any, page: any, prompt: string): Promise<void> {
+  const normalizedPrompt = normalizePromptText(prompt);
+
+  await input.fill("").catch(() => {});
+  await input.fill(normalizedPrompt).catch(() => {});
+  if (await verifyDoubaoPrompt(input, normalizedPrompt)) {
+    return;
+  }
+
+  await input.click({ timeout: 5000 });
+  await page.keyboard.press("Control+A").catch(() => {});
+  await page.keyboard.insertText(normalizedPrompt).catch(() => {});
+  if (await verifyDoubaoPrompt(input, normalizedPrompt)) {
+    return;
+  }
+
+  const wroteViaDom = await input.evaluate((element: HTMLTextAreaElement | HTMLElement, value: string) => {
+    if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
+      element.focus();
+      element.value = value;
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+      return true;
+    }
+    if (element instanceof HTMLElement && element.isContentEditable) {
+      element.focus();
+      element.textContent = value;
+      element.dispatchEvent(new InputEvent("input", { bubbles: true, data: value, inputType: "insertText" }));
+      return true;
+    }
+    return false;
+  }, normalizedPrompt).catch(() => false);
+
+  if (!wroteViaDom || !(await verifyDoubaoPrompt(input, normalizedPrompt))) {
+    throw new ZeroTokenError("DOM_SEND_FAILED", "Failed to write full prompt into Doubao input box", {
+      retryable: true,
+      details: {
+        expectedLength: normalizedPrompt.length,
+        actualLength: (await readDoubaoInputValue(input)).length,
+      },
+    });
+  }
+}
+
 export async function sendDoubaoDomPrompt(context: DomSendPromptContext): Promise<void> {
   const { session, request } = context;
   const input = session.page.locator("textarea.semi-input-textarea").first();
@@ -17,9 +79,10 @@ export async function sendDoubaoDomPrompt(context: DomSendPromptContext): Promis
     });
   }
 
+  const prompt = getPromptFromInput(request.input);
   await input.click({ timeout: 5000 });
   await pasteInputImages(session.page, request);
-  await session.page.keyboard.type(getPromptFromInput(request.input), { delay: 15 });
+  await writeDoubaoPrompt(input, session.page, prompt);
 
   const sendButton = session.page.locator(
     "button[data-dbx-name='button'][data-disabled='false']",
