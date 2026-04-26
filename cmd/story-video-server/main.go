@@ -2966,13 +2966,13 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
       }
       pre {
         margin: 0;
-        white-space: pre-wrap;
-        word-break: break-word;
+        white-space: pre;
         background: #09101f;
         border-radius: 10px;
         padding: 14px;
         border: 1px solid #26304f;
-        min-height: 320px;
+        height: 320px;
+        max-height: 320px;
         overflow: auto;
       }
       code {
@@ -2983,6 +2983,102 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
       ul {
         padding-left: 18px;
         color: #cfd8f3;
+      }
+      h3 {
+        margin: 0 0 10px;
+      }
+      .inline-actions {
+        display: flex;
+        gap: 10px;
+        margin-top: 12px;
+      }
+      .inline-actions button {
+        margin-top: 0;
+      }
+      .stack {
+        display: grid;
+        gap: 16px;
+      }
+      .detail-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 16px;
+      }
+      .muted {
+        color: #98a6cf;
+        font-size: 13px;
+      }
+      .meta-list {
+        display: grid;
+        gap: 10px;
+      }
+      .project-actions {
+        margin-top: 12px;
+        display: grid;
+        gap: 12px;
+      }
+      .meta-item {
+        padding: 12px;
+        border-radius: 10px;
+        background: #0e1530;
+        border: 1px solid #26304f;
+      }
+      .scene-list, .task-list {
+        display: grid;
+        gap: 12px;
+      }
+      .scene-card, .task-row {
+        padding: 14px;
+        border-radius: 10px;
+        background: #0e1530;
+        border: 1px solid #26304f;
+      }
+      .scene-head, .task-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: flex-start;
+      }
+      .scene-actions {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+        margin-top: 12px;
+      }
+      .scene-actions button {
+        margin-top: 0;
+        padding: 9px 10px;
+      }
+      .task-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      .task-chip {
+        border-radius: 999px;
+        padding: 4px 10px;
+        font-size: 12px;
+        background: #182342;
+        border: 1px solid #324068;
+        color: #cfd8f3;
+      }
+      .small {
+        font-size: 12px;
+      }
+      .empty-state {
+        padding: 14px;
+        border-radius: 10px;
+        border: 1px dashed #324068;
+        color: #98a6cf;
+        background: #0e1530;
+      }
+      a.link {
+        color: #93c5fd;
+        text-decoration: none;
+      }
+      a.link:hover {
+        text-decoration: underline;
       }
     </style>
   </head>
@@ -3021,6 +3117,9 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
           <input id="storyboardProviderRef" value="doubao/web" />
 
           <button id="generateBtn">生成 Storyboard</button>
+          <div class="inline-actions">
+            <button id="detailBtn" class="secondary" type="button">读取项目详情</button>
+          </div>
 
           <h2 style="margin-top: 20px;">接口</h2>
           <ul>
@@ -3045,14 +3144,48 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
         <h2>结果</h2>
         <pre id="output">{ "ok": true }</pre>
       </section>
+
+      <section class="panel stack" style="margin-top: 16px;">
+        <div>
+          <h2>项目详情</h2>
+          <p class="muted">读取 <code>GET /api/projects/{projectId}</code>，展示场景及相关任务，并可直接触发单场景生成接口。</p>
+        </div>
+
+        <div class="detail-grid">
+          <div>
+            <h3>项目概览</h3>
+            <div id="projectMeta" class="meta-list">
+              <div class="empty-state">输入 project_id 后点击“读取项目详情”。</div>
+            </div>
+            <div id="finalVideoPanel" class="project-actions">
+              <div class="empty-state">场景任务完成后，可在这里手动触发最终视频生成。</div>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <h3>场景任务</h3>
+          <div id="sceneList" class="scene-list">
+            <div class="empty-state">Storyboard 生成并拆分场景任务后，这里会显示每个 scene 的相关任务和操作按钮。</div>
+          </div>
+        </div>
+      </section>
     </main>
 
     <script>
       const output = document.getElementById("output");
       const statusText = document.getElementById("statusText");
+      const projectIdInput = document.getElementById("projectId");
+      const projectMeta = document.getElementById("projectMeta");
+      const finalVideoPanel = document.getElementById("finalVideoPanel");
+      const sceneList = document.getElementById("sceneList");
 
       function setOutput(value) {
         output.textContent = JSON.stringify(value, null, 2);
+      }
+
+      function setStatus(message) {
+        statusText.textContent = message;
       }
 
       async function readJson(res) {
@@ -3074,28 +3207,159 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
         return data;
       }
 
+      function escapeHtml(value) {
+        return String(value == null ? "" : value)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function formatTaskKind(kind) {
+        if (!kind) {
+          return "-";
+        }
+        return kind.replaceAll("_", " ");
+      }
+
+      function isSceneTaskFinished(task) {
+        return !!task && task.status === "success";
+      }
+
+      function canGenerateFinalVideo(scenes, tasks) {
+        if (!scenes || scenes.length === 0) {
+          return false;
+        }
+        return scenes.every(function(scene) {
+          const sceneTasks = (tasks || []).filter(function(task) {
+            return task.scene_id === scene.scene_id;
+          });
+          const imageTask = sceneTasks.find(function(task) { return task.kind === "scene_image_generation"; });
+          const audioTask = sceneTasks.find(function(task) { return task.kind === "scene_audio_generation"; });
+          const videoTask = sceneTasks.find(function(task) { return task.kind === "scene_video_compositing"; });
+          return isSceneTaskFinished(imageTask) &&
+            isSceneTaskFinished(audioTask) &&
+            isSceneTaskFinished(videoTask) &&
+            (scene.compose_status === "success" || scene.compose_status === "preview_ready");
+        });
+      }
+
+      function renderProjectMeta(project) {
+        if (!project) {
+          projectMeta.innerHTML = "<div class=\"empty-state\">暂无项目信息。</div>";
+          return;
+        }
+        const items = [
+          ["项目 ID", project.project_id],
+          ["标题", project.title],
+          ["状态", project.status],
+          ["场景数", project.scene_count || 0],
+          ["Storyboard 有效", project.storyboard_valid ? "yes" : "no"],
+          ["Final Video", project.final_video_status || "-"]
+        ];
+        projectMeta.innerHTML = items.map(function(item) {
+          return "<div class=\"meta-item\"><div class=\"muted\">" + escapeHtml(item[0]) + "</div><div>" + escapeHtml(item[1]) + "</div></div>";
+        }).join("");
+      }
+
+      function renderFinalVideoPanel(project, scenes, tasks) {
+        if (!project) {
+          finalVideoPanel.innerHTML = "<div class=\"empty-state\">暂无最终视频信息。</div>";
+          return;
+        }
+        const ready = canGenerateFinalVideo(scenes, tasks);
+        const running = project.final_video_status === "running";
+        const preview = project.final_video_preview_url
+          ? "<a class=\"link\" href=\"" + escapeHtml(project.final_video_preview_url) + "\" target=\"_blank\" rel=\"noreferrer\">打开预览</a>"
+          : "暂无预览";
+        const disabled = ready && !running ? "" : " disabled";
+        const hint = ready
+          ? "全部场景任务已完成，可以手动触发最终视频生成。"
+          : "请先完成所有场景的 image、audio、video 任务。";
+        finalVideoPanel.innerHTML = "" +
+          "<div class=\"meta-item\">" +
+            "<div class=\"muted\">最终视频状态</div>" +
+            "<div>" + escapeHtml(project.final_video_status || "pending") + "</div>" +
+            "<div class=\"muted small\" style=\"margin-top: 8px;\">" + escapeHtml(hint) + "</div>" +
+            "<div class=\"muted small\" style=\"margin-top: 8px;\">预览: " + preview + "</div>" +
+          "</div>" +
+          "<button id=\"finalVideoBtn\" type=\"button\"" + disabled + ">生成最终视频</button>";
+      }
+
+      function renderSceneList(scenes, tasks) {
+        if (!scenes || scenes.length === 0) {
+          sceneList.innerHTML = "<div class=\"empty-state\">暂无场景数据，先生成 storyboard。</div>";
+          return;
+        }
+
+        sceneList.innerHTML = scenes.map(function(scene) {
+          const sceneTasks = (tasks || []).filter(function(task) {
+            return task.scene_id === scene.scene_id;
+          });
+          const taskHtml = sceneTasks.length > 0
+            ? sceneTasks.map(function(task) {
+                return "<div class=\"task-chip\">" + escapeHtml(formatTaskKind(task.kind)) + ": " + escapeHtml(task.status || "-") + "</div>";
+              }).join("")
+            : "<div class=\"muted small\">暂无关联任务</div>";
+          const canRunVideo = scene.image_status === "success" && scene.audio_status === "success";
+          return "" +
+            "<div class=\"scene-card\">" +
+              "<div class=\"scene-head\">" +
+                "<div>" +
+                  "<div><strong>" + escapeHtml(scene.scene_id) + "</strong> · " + escapeHtml(scene.title || "Untitled Scene") + "</div>" +
+                  "<div class=\"muted small\">sequence: " + escapeHtml(scene.sequence || "-") + " · status: " + escapeHtml(scene.status || "-") + "</div>" +
+                "</div>" +
+                "<div class=\"task-chip\">" + escapeHtml(scene.compose_status || "pending") + "</div>" +
+              "</div>" +
+              "<div class=\"muted small\" style=\"margin-top: 8px;\">image: " + escapeHtml(scene.image_status || "-") + " · audio: " + escapeHtml(scene.audio_status || "-") + " · video: " + escapeHtml(scene.compose_status || "-") + "</div>" +
+              "<div class=\"task-chips\">" + taskHtml + "</div>" +
+              "<div class=\"scene-actions\">" +
+                "<button type=\"button\" data-scene-id=\"" + escapeHtml(scene.scene_id) + "\" data-scene-action=\"image\">运行图片任务</button>" +
+                "<button type=\"button\" data-scene-id=\"" + escapeHtml(scene.scene_id) + "\" data-scene-action=\"audio\">运行音频任务</button>" +
+                "<button type=\"button\" data-scene-id=\"" + escapeHtml(scene.scene_id) + "\" data-scene-action=\"video\"" + (canRunVideo ? "" : " disabled") + ">运行视频任务</button>" +
+              "</div>" +
+            "</div>";
+        }).join("");
+      }
+
+      function renderProjectDetail(detail) {
+        renderProjectMeta(detail.project);
+        renderFinalVideoPanel(detail.project, detail.scenes || [], detail.tasks || []);
+        renderSceneList(detail.scenes || [], detail.tasks || []);
+      }
+
+      async function loadProjectDetail(projectId) {
+        if (!projectId) {
+          throw new Error("请先输入 project_id");
+        }
+        const detail = await callApi("/api/projects/" + encodeURIComponent(projectId));
+        renderProjectDetail(detail);
+        return detail;
+      }
+
       document.getElementById("healthBtn").addEventListener("click", async () => {
-        statusText.textContent = "检查中...";
+        setStatus("检查中...");
         try {
           await callApi("/healthz");
-          statusText.textContent = "健康检查完成";
+          setStatus("健康检查完成");
         } catch (error) {
-          statusText.textContent = error.message;
+          setStatus(error.message);
         }
       });
 
       document.getElementById("listBtn").addEventListener("click", async () => {
-        statusText.textContent = "读取项目中...";
+        setStatus("读取项目中...");
         try {
           await callApi("/api/projects");
-          statusText.textContent = "项目列表已刷新";
+          setStatus("项目列表已刷新");
         } catch (error) {
-          statusText.textContent = error.message;
+          setStatus(error.message);
         }
       });
 
       document.getElementById("createBtn").addEventListener("click", async () => {
-        statusText.textContent = "创建项目中...";
+        setStatus("创建项目中...");
         try {
           const data = await callApi("/api/projects", {
             method: "POST",
@@ -3108,21 +3372,22 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
           });
           const projectId = data.project && data.project.project_id;
           if (projectId) {
-            document.getElementById("projectId").value = projectId;
+            projectIdInput.value = projectId;
+            await loadProjectDetail(projectId);
           }
-          statusText.textContent = "项目已创建";
+          setStatus("项目已创建");
         } catch (error) {
-          statusText.textContent = error.message;
+          setStatus(error.message);
         }
       });
 
       document.getElementById("generateBtn").addEventListener("click", async () => {
-        const projectId = document.getElementById("projectId").value.trim();
+        const projectId = projectIdInput.value.trim();
         if (!projectId) {
-          statusText.textContent = "请先输入 project_id";
+          setStatus("请先输入 project_id");
           return;
         }
-        statusText.textContent = "生成 storyboard 中...";
+        setStatus("生成 storyboard 中...");
         try {
           await callApi("/api/projects/" + encodeURIComponent(projectId) + "/storyboard", {
             method: "POST",
@@ -3132,9 +3397,79 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
               timeout_ms: 300000
             })
           });
-          statusText.textContent = "storyboard 生成完成";
+          await loadProjectDetail(projectId);
+          setStatus("storyboard 生成完成");
         } catch (error) {
-          statusText.textContent = error.message;
+          setStatus(error.message);
+        }
+      });
+
+      document.getElementById("detailBtn").addEventListener("click", async () => {
+        const projectId = projectIdInput.value.trim();
+        if (!projectId) {
+          setStatus("请先输入 project_id");
+          return;
+        }
+        setStatus("读取项目详情中...");
+        try {
+          await loadProjectDetail(projectId);
+          setStatus("项目详情已刷新");
+        } catch (error) {
+          setStatus(error.message);
+        }
+      });
+
+      sceneList.addEventListener("click", async function(event) {
+        const button = event.target.closest("button[data-scene-id][data-scene-action]");
+        if (!button) {
+          return;
+        }
+        const projectId = projectIdInput.value.trim();
+        if (!projectId) {
+          setStatus("请先输入 project_id");
+          return;
+        }
+        const sceneId = button.getAttribute("data-scene-id");
+        const action = button.getAttribute("data-scene-action");
+        button.disabled = true;
+        setStatus("执行 " + sceneId + " 的 " + action + " 任务中...");
+        try {
+          await callApi("/api/projects/" + encodeURIComponent(projectId) + "/scenes/" + encodeURIComponent(sceneId) + "/" + encodeURIComponent(action), {
+            method: "POST"
+          });
+          await loadProjectDetail(projectId);
+          setStatus(sceneId + " 的 " + action + " 任务已触发");
+        } catch (error) {
+          setStatus(error.message);
+        } finally {
+          button.disabled = false;
+        }
+      });
+
+      finalVideoPanel.addEventListener("click", async function(event) {
+        const button = event.target.closest("#finalVideoBtn");
+        if (!button) {
+          return;
+        }
+        const projectId = projectIdInput.value.trim();
+        if (!projectId) {
+          setStatus("请先输入 project_id");
+          return;
+        }
+        button.disabled = true;
+        setStatus("生成最终视频中...");
+        try {
+          await callApi("/api/projects/" + encodeURIComponent(projectId) + "/final-video", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({})
+          });
+          await loadProjectDetail(projectId);
+          setStatus("最终视频生成已触发");
+        } catch (error) {
+          setStatus(error.message);
+        } finally {
+          button.disabled = false;
         }
       });
     </script>

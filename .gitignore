@@ -9,3 +9,7 @@ npm
 tsc
 zero-video-factory@*
 story-video-server
+*.mp4
+*.wav
+*.srt
+projects/

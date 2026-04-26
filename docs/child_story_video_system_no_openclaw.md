@@ -231,6 +231,186 @@ Orchestrator 校验 storyboard.json
 
 首版后端明确选择 Go 实现。
 
+#### 4.2.1 当前服务 API 清单
+
+当前 Go 服务首版已经实现以下接口，前端页面和外部调用方应优先以这组接口为准。
+
+基础路由：
+
+- `GET /`
+- `GET /healthz`
+- `GET /api/projects`
+- `POST /api/projects`
+- `GET /api/projects/{projectId}`
+- `POST /api/projects/{projectId}/storyboard`
+- `GET /api/projects/{projectId}/scenes`
+- `GET /api/projects/{projectId}/scenes/{sceneId}`
+- `POST /api/projects/{projectId}/scenes/{sceneId}/image`
+- `POST /api/projects/{projectId}/scenes/{sceneId}/audio`
+- `POST /api/projects/{projectId}/scenes/{sceneId}/video`
+- `POST /api/projects/{projectId}/final-video`
+- `GET /api/projects/{projectId}/assets`
+- `GET /local/projects/{projectId}/...`
+
+接口说明：
+
+| 接口 | 方法 | 说明 |
+| --- | --- | --- |
+| `/` | `GET` | 返回内置 Web 操作页，用于本地调试、创建项目、触发 Storyboard 和 Scene 任务 |
+| `/healthz` | `GET` | 返回服务健康状态、本地 `projects` 目录、`zero-token` CLI、`edge-tts`、`ffmpeg`、`ffprobe` 可用性 |
+| `/api/projects` | `GET` | 返回项目列表 |
+| `/api/projects` | `POST` | 创建新项目，写入 `project.json` 与初始 `tasks.json` |
+| `/api/projects/{projectId}` | `GET` | 返回项目详情，聚合 `project`、`storyboard`、`storyboard_validation`、`scenes`、`tasks`、`files` |
+| `/api/projects/{projectId}/storyboard` | `POST` | 调用本地 `zero-token` 生成 `storyboard.json`，随后做校验并拆分 Scene 级任务 |
+| `/api/projects/{projectId}/scenes` | `GET` | 返回当前项目的全部场景 |
+| `/api/projects/{projectId}/scenes/{sceneId}` | `GET` | 返回单个场景详情 |
+| `/api/projects/{projectId}/scenes/{sceneId}/image` | `POST` | 生成该场景图片，成功后更新 `scene.image_*` 与 `tasks.json` |
+| `/api/projects/{projectId}/scenes/{sceneId}/audio` | `POST` | 生成该场景音频与字幕，成功后更新 `scene.audio_*`、字幕路径和任务状态 |
+| `/api/projects/{projectId}/scenes/{sceneId}/video` | `POST` | 将该场景的图片、音频、字幕合成为场景视频或预览页 |
+| `/api/projects/{projectId}/final-video` | `POST` | 将多个 Scene 视频片段合并为项目级最终视频或预览页 |
+| `/api/projects/{projectId}/assets` | `GET` | 返回项目下可访问的资源信息 |
+| `/local/projects/{projectId}/...` | `GET` | 以静态文件方式访问项目目录内的图片、音频、字幕、场景视频、最终视频等产物 |
+
+#### 4.2.2 关键请求体
+
+1. 创建项目
+
+```json
+{
+  "title": "小云朵的星星收集之旅",
+  "story": "在很远很远的天空上，住着一朵软乎乎的小云朵，名字叫棉棉。一天晚上，它决定帮助迷路的小星星回家。",
+  "provider_ref": "doubao/web"
+}
+```
+
+2. 生成 Storyboard
+
+```json
+{
+  "provider_ref": "doubao/web",
+  "browser_profile_id": "",
+  "timeout_ms": 300000
+}
+```
+
+3. 生成 Scene 图片
+
+```json
+{
+  "provider_ref": "doubao/web",
+  "browser_profile_id": "",
+  "timeout_ms": 300000,
+  "force": false
+}
+```
+
+4. 生成 Scene 音频
+
+```json
+{
+  "provider_ref": "edge-tts/zh-CN-XiaoyiNeural",
+  "voice_name": "zh-CN-XiaoyiNeural",
+  "speaking_rate": "-10%",
+  "pitch": "-2%",
+  "force": false
+}
+```
+
+5. 合成 Scene 视频
+
+```json
+{
+  "width": 1920,
+  "height": 1080,
+  "force": false
+}
+```
+
+6. 合成 Final Video
+
+```json
+{
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "transition_duration_ms": 600,
+  "force": false
+}
+```
+
+说明：
+
+- 所有 `POST` 接口都使用 `application/json`
+- 除创建项目外，其余项目级接口都通过路径参数传入 `projectId`
+- Scene 级接口通过路径参数传入 `sceneId`
+- `force=true` 表示即使已有成功产物，也允许重新生成
+
+#### 4.2.3 推荐调用顺序
+
+对于一个包含多个场景的项目，推荐按以下顺序调用：
+
+```text
+1. POST /api/projects
+2. POST /api/projects/{projectId}/storyboard
+3. GET  /api/projects/{projectId}
+4. 针对每个 scene 重复执行：
+   - POST /api/projects/{projectId}/scenes/{sceneId}/image
+   - POST /api/projects/{projectId}/scenes/{sceneId}/audio
+   - POST /api/projects/{projectId}/scenes/{sceneId}/video
+5. 当所有 scene video 都 ready 后：
+   - POST /api/projects/{projectId}/final-video
+6. 通过 GET /api/projects/{projectId} 或 /local/projects/{projectId}/... 获取最终结果
+```
+
+补充说明：
+
+- `storyboard` 生成成功后，服务会根据 `storyboard.json` 中的 `scenes` 自动拆出 `scene_image_generation`、`scene_audio_generation`、`scene_video_compositing` 三类任务
+- `POST /api/projects/{projectId}/scenes/{sceneId}/video` 依赖该场景的图片和音频已经就绪
+- `POST /api/projects/{projectId}/final-video` 依赖全部 Scene 的视频片段已经完成，否则接口会直接返回错误
+- 本机安装 `ffmpeg` 时输出真实 `mp4` 文件；未安装时退化为 HTML 预览页，便于开发阶段验证流程
+
+#### 4.2.4 典型响应结构
+
+1. 健康检查响应
+
+```json
+{
+  "ok": true,
+  "projects_dir": "/path/to/projects",
+  "zero_token_cli": "/path/to/dist/zero-token/bridge-cli.js",
+  "zero_token_built": true,
+  "edge_tts": "/usr/bin/edge-tts",
+  "ffmpeg": "/usr/bin/ffmpeg",
+  "ffprobe": "/usr/bin/ffprobe"
+}
+```
+
+2. 项目详情响应
+
+```json
+{
+  "project": {},
+  "storyboard": {},
+  "storyboard_validation": {
+    "valid": true,
+    "errors": [],
+    "scene_count": 3
+  },
+  "scenes": [],
+  "tasks": [],
+  "files": {
+    "project": "/abs/path/project.json",
+    "tasks": "/abs/path/tasks.json",
+    "storyboard": "/abs/path/storyboard.json"
+  }
+}
+```
+
+3. Scene 级接口响应
+
+- `image`、`audio`、`video` 三个 Scene 接口都直接返回更新后的 `scene` 对象
+- 调用方可以通过响应中的 `image_status`、`audio_status`、`compose_status` 和各类本地路径 / 预览 URL 判断下一步是否可继续执行
+
 ### 4.3 Orchestrator 模块
 
 Orchestrator 是系统核心中枢。
