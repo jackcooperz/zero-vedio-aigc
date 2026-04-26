@@ -20,6 +20,11 @@ import (
 	"unicode/utf8"
 )
 
+const (
+	defaultEdgeTTSVoiceName   = "zh-CN-XiaoxiaoNeural"
+	defaultEdgeTTSProviderRef = "edge-tts/" + defaultEdgeTTSVoiceName
+)
+
 type app struct {
 	rootDir          string
 	projectsDir      string
@@ -1031,6 +1036,7 @@ func (a *app) generateSceneImage(projectID string, sceneID string, req generateS
 	scene.ImageMimeType = mimeType
 	scene.ImageGeneratedAt = finishedAt
 	scene.ImageError = ""
+	invalidateSceneDerivedMedia(&scene)
 	scene.UpdatedAt = finishedAt
 	if err := a.writeSceneFile(projectID, scene); err != nil {
 		return sceneFile{}, err
@@ -1042,6 +1048,7 @@ func (a *app) generateSceneImage(projectID string, sceneID string, req generateS
 	}
 
 	project.Status = "image_partial_ready"
+	invalidateProjectFinalVideo(&project)
 	project.UpdatedAt = finishedAt
 	if err := a.writeProject(project); err != nil {
 		return sceneFile{}, err
@@ -1080,7 +1087,7 @@ func (a *app) generateSceneAudio(projectID string, sceneID string, req generateS
 	if shouldUseEdgeTTS(providerRef) && lookupCommand("edge-tts") == "" {
 		providerRef = "builtin/mock-tts"
 	}
-	voiceName, speakingRate, pitch := resolveSceneVoiceSettings(storyboardRoot, scene, req)
+	voiceName, speakingRate, pitch := resolveSceneVoiceSettings(storyboardRoot, scene, req, providerRef)
 	durationMs := estimateSpeechDurationMs(scene.Narration, scene.DurationHintSec, speakingRate)
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -1143,7 +1150,6 @@ func (a *app) generateSceneAudio(projectID string, sceneID string, req generateS
 		durationMs = probedDurationMs
 	}
 	finishedAt := time.Now().UTC().Format(time.RFC3339)
-	scene.Status = deriveSceneStatus(scene.ImageStatus, "success", scene.ComposeStatus)
 	scene.AudioStatus = "success"
 	scene.AudioLocalPath = audioPath
 	scene.AudioPreviewURL = a.projectStaticURL(projectID, filepath.Join("assets", "audio", sceneID+audioExt))
@@ -1154,6 +1160,7 @@ func (a *app) generateSceneAudio(projectID string, sceneID string, req generateS
 	scene.SubtitleLocalPath = subtitlePath
 	scene.SubtitlePreviewURL = a.projectStaticURL(projectID, filepath.Join("assets", "subtitles", sceneID+".srt"))
 	scene.SceneDurationMs = maxInt(scene.SceneDurationMs, durationMs)
+	invalidateSceneDerivedMedia(&scene)
 	scene.UpdatedAt = finishedAt
 	if err := a.writeSceneFile(projectID, scene); err != nil {
 		return sceneFile{}, err
@@ -1165,6 +1172,7 @@ func (a *app) generateSceneAudio(projectID string, sceneID string, req generateS
 	}
 
 	project.Status = "audio_partial_ready"
+	invalidateProjectFinalVideo(&project)
 	project.UpdatedAt = finishedAt
 	if err := a.writeProject(project); err != nil {
 		return sceneFile{}, err
@@ -1181,7 +1189,7 @@ func (a *app) composeSceneVideo(projectID string, sceneID string, req composeSce
 	if err != nil {
 		return sceneFile{}, err
 	}
-	if (scene.ComposeStatus == "success" || scene.ComposeStatus == "preview_ready") && !req.Force {
+	if (scene.ComposeStatus == "success" || scene.ComposeStatus == "preview_ready") && !req.Force && !isSceneDerivedMediaStale(scene) {
 		return scene, nil
 	}
 	if scene.ImageLocalPath == "" || !fileExists(scene.ImageLocalPath) {
@@ -1306,15 +1314,15 @@ func (a *app) composeFinalVideo(projectID string, req composeFinalVideoRequest) 
 	if err != nil {
 		return projectFile{}, err
 	}
-	if project.FinalVideoStatus == "success" && !req.Force {
-		return project, nil
-	}
 	scenes, err := a.readSceneFiles(projectID)
 	if err != nil {
 		return projectFile{}, err
 	}
 	if len(scenes) == 0 {
 		return projectFile{}, errors.New("no scenes found")
+	}
+	if project.FinalVideoStatus == "success" && !req.Force && !isFinalVideoStale(project, scenes) {
+		return project, nil
 	}
 	ffmpegPath := lookupCommand("ffmpeg")
 
@@ -1698,6 +1706,9 @@ func resolveAudioProviderRef(storyboard map[string]any, requestProviderRef strin
 			return providerRef
 		}
 	}
+	if lookupCommand("edge-tts") != "" {
+		return defaultEdgeTTSProviderRef
+	}
 	return "builtin/mock-tts"
 }
 
@@ -1706,7 +1717,19 @@ func shouldUseEdgeTTS(providerRef string) bool {
 	return strings.HasPrefix(providerRef, "edge-tts/")
 }
 
-func resolveSceneVoiceSettings(storyboard map[string]any, scene sceneFile, req generateSceneAudioRequest) (string, string, string) {
+func edgeTTSVoiceNameFromProviderRef(providerRef string) string {
+	providerRef = strings.TrimSpace(providerRef)
+	if !shouldUseEdgeTTS(providerRef) {
+		return ""
+	}
+	voiceName := strings.TrimSpace(strings.TrimPrefix(providerRef, "edge-tts/"))
+	if voiceName == "" {
+		return defaultEdgeTTSVoiceName
+	}
+	return voiceName
+}
+
+func resolveSceneVoiceSettings(storyboard map[string]any, scene sceneFile, req generateSceneAudioRequest, providerRef string) (string, string, string) {
 	voiceName := strings.TrimSpace(req.VoiceName)
 	speakingRate := strings.TrimSpace(req.SpeakingRate)
 	pitch := strings.TrimSpace(req.Pitch)
@@ -1731,7 +1754,11 @@ func resolveSceneVoiceSettings(storyboard map[string]any, scene sceneFile, req g
 		}
 	}
 	if voiceName == "" {
-		voiceName = "builtin-mock-voice"
+		if shouldUseEdgeTTS(providerRef) {
+			voiceName = edgeTTSVoiceNameFromProviderRef(providerRef)
+		} else {
+			voiceName = "builtin-mock-voice"
+		}
 	}
 	if speakingRate == "" {
 		speakingRate = "0%"
@@ -1818,6 +1845,78 @@ func deriveSceneStatus(imageStatus string, audioStatus string, composeStatus str
 	default:
 		return "scene_tasks_ready"
 	}
+}
+
+func invalidateSceneDerivedMedia(scene *sceneFile) {
+	scene.ComposeStatus = ""
+	scene.ComposeMode = ""
+	scene.SceneVideoLocalPath = ""
+	scene.SceneVideoPreviewURL = ""
+	scene.SceneVideoMimeType = ""
+	scene.ComposeError = ""
+	scene.ComposedAt = ""
+	scene.Status = deriveSceneStatus(scene.ImageStatus, scene.AudioStatus, scene.ComposeStatus)
+}
+
+func invalidateProjectFinalVideo(project *projectFile) {
+	project.FinalVideoStatus = ""
+	project.FinalVideoLocalPath = ""
+	project.FinalVideoPreviewURL = ""
+	project.FinalVideoMimeType = ""
+	project.FinalVideoDurationMs = 0
+	project.FinalVideoError = ""
+	project.FinalVideoGeneratedAt = ""
+}
+
+func parseRFC3339Timestamp(value string) time.Time {
+	text := strings.TrimSpace(value)
+	if text == "" {
+		return time.Time{}
+	}
+	parsed, err := time.Parse(time.RFC3339, text)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed
+}
+
+func isSceneDerivedMediaStale(scene sceneFile) bool {
+	composedAt := parseRFC3339Timestamp(scene.ComposedAt)
+	if composedAt.IsZero() {
+		return true
+	}
+	imageGeneratedAt := parseRFC3339Timestamp(scene.ImageGeneratedAt)
+	if !imageGeneratedAt.IsZero() && imageGeneratedAt.After(composedAt) {
+		return true
+	}
+	audioGeneratedAt := parseRFC3339Timestamp(scene.AudioGeneratedAt)
+	if !audioGeneratedAt.IsZero() && audioGeneratedAt.After(composedAt) {
+		return true
+	}
+	if scene.SceneVideoLocalPath == "" || !fileExists(scene.SceneVideoLocalPath) {
+		return true
+	}
+	return false
+}
+
+func isFinalVideoStale(project projectFile, scenes []sceneFile) bool {
+	finalGeneratedAt := parseRFC3339Timestamp(project.FinalVideoGeneratedAt)
+	if finalGeneratedAt.IsZero() {
+		return true
+	}
+	if project.FinalVideoLocalPath == "" || !fileExists(project.FinalVideoLocalPath) {
+		return true
+	}
+	for _, scene := range scenes {
+		if isSceneDerivedMediaStale(scene) {
+			return true
+		}
+		composedAt := parseRFC3339Timestamp(scene.ComposedAt)
+		if !composedAt.IsZero() && composedAt.After(finalGeneratedAt) {
+			return true
+		}
+	}
+	return false
 }
 
 func buildSceneImagePrompt(storyboard map[string]any, scene sceneFile) string {
@@ -3419,6 +3518,18 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
         }
       });
 
+      function buildSceneActionRequestBody(action) {
+        if (action !== "audio") {
+          return null;
+        }
+        return {
+          provider_ref: "`+defaultEdgeTTSProviderRef+`",
+          voice_name: "`+defaultEdgeTTSVoiceName+`",
+          speaking_rate: "0%%",
+          pitch: "0Hz"
+        };
+      }
+
       sceneList.addEventListener("click", async function(event) {
         const button = event.target.closest("button[data-scene-id][data-scene-action]");
         if (!button) {
@@ -3434,9 +3545,13 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
         button.disabled = true;
         setStatus("执行 " + sceneId + " 的 " + action + " 任务中...");
         try {
-          await callApi("/api/projects/" + encodeURIComponent(projectId) + "/scenes/" + encodeURIComponent(sceneId) + "/" + encodeURIComponent(action), {
-            method: "POST"
-          });
+          const options = { method: "POST" };
+          const requestBody = buildSceneActionRequestBody(action);
+          if (requestBody) {
+            options.headers = { "Content-Type": "application/json" };
+            options.body = JSON.stringify(requestBody);
+          }
+          await callApi("/api/projects/" + encodeURIComponent(projectId) + "/scenes/" + encodeURIComponent(sceneId) + "/" + encodeURIComponent(action), options);
           await loadProjectDetail(projectId);
           setStatus(sceneId + " 的 " + action + " 任务已触发");
         } catch (error) {
