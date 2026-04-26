@@ -16,6 +16,20 @@
       "sourceMaps": true,
       "outFiles": ["${workspaceFolder}/dist/**/*.js"],
       "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "Debug Story Video Server",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/cmd/story-video-server",
+      "preLaunchTask": "npm: chrome:debug",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PORT": "4388",
+        "PATH": "${env:HOME}/.local/bin:${env:PATH}"
+      },
+      "console": "integratedTerminal"
     }
   ]
 }
