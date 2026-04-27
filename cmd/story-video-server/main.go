@@ -38,6 +38,7 @@ type createProjectRequest struct {
 	ProviderRef            string `json:"provider_ref"`
 	TargetDurationSec      int    `json:"target_duration_sec,omitempty"`
 	ImageSwitchIntervalSec int    `json:"image_switch_interval_sec,omitempty"`
+	AspectRatio            string `json:"aspect_ratio,omitempty"`
 }
 
 type generateStoryboardRequest struct {
@@ -82,6 +83,7 @@ type projectFile struct {
 	ProviderRef              string `json:"provider_ref"`
 	TargetDurationSec        int    `json:"target_duration_sec,omitempty"`
 	ImageSwitchIntervalSec   int    `json:"image_switch_interval_sec,omitempty"`
+	AspectRatio              string `json:"aspect_ratio,omitempty"`
 	Status                   string `json:"status"`
 	StoryboardPath           string `json:"storyboard_path,omitempty"`
 	StoryboardValid          bool   `json:"storyboard_valid,omitempty"`
@@ -512,6 +514,10 @@ func (a *app) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 func (a *app) createProject(req createProjectRequest) (projectFile, error) {
 	projectID := fmt.Sprintf("pv_%d", time.Now().UnixMilli())
 	now := time.Now().UTC().Format(time.RFC3339)
+	aspectRatio := strings.TrimSpace(req.AspectRatio)
+	if aspectRatio == "" {
+		aspectRatio = "16:9"
+	}
 	project := projectFile{
 		ProjectID:              projectID,
 		Title:                  strings.TrimSpace(req.Title),
@@ -519,6 +525,7 @@ func (a *app) createProject(req createProjectRequest) (projectFile, error) {
 		ProviderRef:            defaultProviderRef(req.ProviderRef),
 		TargetDurationSec:      req.TargetDurationSec,
 		ImageSwitchIntervalSec: req.ImageSwitchIntervalSec,
+		AspectRatio:            aspectRatio,
 		Status:                 "created",
 		CreatedAt:              now,
 		UpdatedAt:              now,
@@ -902,16 +909,20 @@ func (a *app) calculateImageCount(sceneDuration float64, switchInterval int) int
 	// 限制关键帧数量在 1-6 之间
 	if imageCount < 1 {
 		imageCount = 1
-	} else if imageCount > 6 {
-		imageCount = 6
+	} else if imageCount > 20 {
+		imageCount = 20
 	}
 
 	return imageCount
 }
 
 func (a *app) generateKeyframesForScene(scene map[string]any, imageCount int, project projectFile) (map[string]any, error) {
+	aspectRatio := project.AspectRatio
+	if aspectRatio == "" {
+		aspectRatio = "16:9"
+	}
 	// 构建关键帧生成提示词
-	keyframesPrompt := buildKeyframesPrompt(scene, imageCount)
+	keyframesPrompt := buildKeyframesPrompt(scene, imageCount, aspectRatio)
 
 	// 调用 zero-token 生成关键帧
 	providerRef := "doubao/web" // 使用默认 provider
@@ -2225,9 +2236,15 @@ func buildSceneImagePrompt(storyboard map[string]any, scene sceneFile) string {
 	visual := compactJSONObject(scene.Visual)
 	audio := compactJSONObject(scene.Audio)
 	effects := compactJSONObject(scene.Effects)
+	aspectRatio := resolveSceneAspectRatio(storyboard)
 
 	return strings.TrimSpace(fmt.Sprintf(`
 Generate one storyboard scene image for a children's story video.
+
+Aspect ratio constraint (strict):
+- Aspect ratio: %s
+- The generated image must strictly follow this aspect ratio composition requirements.
+- Composition, camera angle, and subject positioning must all adapt to the %s aspect ratio.
 
 Scene title: %s
 Story function: %s
@@ -2241,8 +2258,8 @@ Visual guidance: %s
 Audio reference: %s
 Effects mood: %s
 
-Return the best single image for this scene.
-`, scene.Title, scene.StoryFunction, scene.Narration, subjectPrompt, scenePrompt, globalStyle, characterBible, environment, visual, audio, effects))
+Return the best single image for this scene, ensuring the composition matches the %s aspect ratio.
+`, aspectRatio, aspectRatio, scene.Title, scene.StoryFunction, scene.Narration, subjectPrompt, scenePrompt, globalStyle, characterBible, environment, visual, audio, effects, aspectRatio))
 }
 
 func compactJSONObject(value any) string {
@@ -3182,6 +3199,11 @@ func buildBaseStoryboardPrompt(project projectFile) string {
 	if project.ImageSwitchIntervalSec > 0 {
 		imageSwitchInfo = fmt.Sprintf("- 图片切换间隔：%d 秒\n", project.ImageSwitchIntervalSec)
 	}
+	aspectRatio := project.AspectRatio
+	if aspectRatio == "" {
+		aspectRatio = "16:9"
+	}
+	var aspectRatioInfo string = fmt.Sprintf("- 画面比例：%s（所有场景的视觉描述和提示词必须符合此画面比例）\n", aspectRatio)
 
 	// 根据目标时长和 TTS 语速计算 narration 总字数要求
 	var narrationLengthInfo string
@@ -3205,6 +3227,7 @@ func buildBaseStoryboardPrompt(project projectFile) string {
 6. audio 必须是 object。
 7. 内容适合儿童故事视频，语气温和，结构清晰。
 8. JSON 的第一个字符必须是 {，最后一个字符必须是 }。
+9. video_profile 中必须包含 aspect_ratio 字段，值为 %s。
 
 scene 的最小合法结构示例：
 {
@@ -3251,17 +3274,18 @@ scene 的最小合法结构示例：
 - 不要遗漏 prompt.subject_prompt 或 prompt.scene_prompt。
 - character_bible、audio_profile、video_profile、render_rules 也要保持 object/array 结构，不要输出自然语言段落。
 - 根据目标视频总时长控制故事的长度和场景数量，确保 narration 的总字数适合目标时长。
+- 所有场景的视觉描述和提示词必须符合画面比例 %s 的构图要求。
 %s
 项目信息：
 - project_id: %s
 - title: %s
-%s%s
+%s%s%s
 原始故事：
 %s
-`, narrationLengthInfo, project.ProjectID, project.Title, durationInfo, imageSwitchInfo, project.Story))
+`, aspectRatio, aspectRatio, narrationLengthInfo, project.ProjectID, project.Title, durationInfo, imageSwitchInfo, aspectRatioInfo, project.Story))
 }
 
-func buildKeyframesPrompt(scene map[string]any, imageCount int) string {
+func buildKeyframesPrompt(scene map[string]any, imageCount int, aspectRatio string) string {
 	title := ""
 	narration := ""
 	storyFunction := ""
@@ -3335,6 +3359,11 @@ func buildKeyframesPrompt(scene map[string]any, imageCount int) string {
 	return strings.TrimSpace(fmt.Sprintf(`
 为以下场景生成 %d 个关键帧，每个关键帧都应该有独立的视觉描述和提示词。
 
+画面比例约束（强约束）：
+- 画面比例：%s
+- 所有关键帧的视觉描述和提示词必须符合此画面比例的构图要求。
+- 构图、镜头角度、主体位置都必须适配 %s 的画面比例。
+
 场景信息：
 - 场景标题：%s
 - 故事功能：%s
@@ -3375,8 +3404,9 @@ func buildKeyframesPrompt(scene map[string]any, imageCount int) string {
 1. 每个关键帧都有独特的视觉描述
 2. 关键帧之间的动作有连贯性
 3. 所有关键帧都符合场景的整体氛围
-4. 只返回 JSON，不要返回其他内容
-`, imageCount, title, storyFunction, narration, strings.Join(characters, ", "), strings.Join(objects, ", "), environment, visual))
+4. 所有关键帧的构图必须符合画面比例 %s
+5. 只返回 JSON，不要返回其他内容
+`, imageCount, aspectRatio, aspectRatio, title, storyFunction, narration, strings.Join(characters, ", "), strings.Join(objects, ", "), environment, visual, aspectRatio))
 }
 
 func buildKeyframeImagePrompt(storyboardRoot map[string]any, scene sceneFile, keyframe keyframe) string {
@@ -3399,8 +3429,15 @@ func buildKeyframeImagePrompt(storyboardRoot map[string]any, scene sceneFile, ke
 		scenePrompt = scene.Prompt["scene_prompt"].(string)
 	}
 
+	aspectRatio := resolveSceneAspectRatio(storyboardRoot)
+
 	return strings.TrimSpace(fmt.Sprintf(`
 为儿童故事视频生成场景关键帧图片。
+
+画面比例约束（强约束）：
+- 画面比例：%s
+- 生成的图片必须符合此画面比例的构图要求。
+- 构图、镜头角度、主体位置都必须适配 %s 的画面比例。
 
 场景信息：
 - 场景标题：%s
@@ -3419,11 +3456,12 @@ func buildKeyframeImagePrompt(storyboardRoot map[string]any, scene sceneFile, ke
 2. 构图清晰，主体突出
 3. 符合场景的环境和氛围
 4. 展现关键帧的具体动作或细节
+5. 图片构图必须符合画面比例 %s 的要求
 
 提示词：
 - 主体提示：%s
 - 场景提示：%s
-`, scene.Title, scene.StoryFunction, scene.Narration, strings.Join(scene.Characters, ", "), strings.Join(scene.Objects, ", "), fmt.Sprintf("%s, %s, %s, %s", scene.Environment["location"], scene.Environment["time_of_day"], scene.Environment["weather"], scene.Environment["atmosphere"]), keyframe.Sequence, fmt.Sprintf("%s, %s, %s, %s", keyframe.Visual["shot_type"], keyframe.Visual["camera_motion"], keyframe.Visual["composition"], keyframe.Visual["action"]), subjectPrompt, scenePrompt))
+`, aspectRatio, aspectRatio, scene.Title, scene.StoryFunction, scene.Narration, strings.Join(scene.Characters, ", "), strings.Join(scene.Objects, ", "), fmt.Sprintf("%s, %s, %s, %s", scene.Environment["location"], scene.Environment["time_of_day"], scene.Environment["weather"], scene.Environment["atmosphere"]), keyframe.Sequence, fmt.Sprintf("%s, %s, %s, %s", keyframe.Visual["shot_type"], keyframe.Visual["camera_motion"], keyframe.Visual["composition"], keyframe.Visual["action"]), aspectRatio, subjectPrompt, scenePrompt))
 }
 
 func buildStoryboardPrompt(project projectFile) string {
@@ -3691,7 +3729,7 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
         font-size: 13px;
         color: #b8c2dd;
       }
-      input, textarea, button {
+      input, textarea, select, button {
         width: 100%%;
         box-sizing: border-box;
         border-radius: 8px;
@@ -3868,6 +3906,16 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
           <label for="imageSwitchInterval">图片切换间隔（秒）</label>
           <input id="imageSwitchInterval" type="number" min="1" value="3" />
 
+          <label for="aspectRatio">画面比例</label>
+          <select id="aspectRatio">
+            <option value="1:1">1:1 正方形</option>
+            <option value="2:3">2:3 社交媒体/自拍</option>
+            <option value="3:4">3:4 经典比例/拍照</option>
+            <option value="4:3">4:3 文章配图/插画</option>
+            <option value="9:16">9:16 手机壁纸/人像</option>
+            <option value="16:9" selected>16:9 桌面壁纸/风景</option>
+          </select>
+
           <button id="createBtn">创建项目</button>
           <span class="status" id="statusText">等待操作</span>
         </section>
@@ -4019,6 +4067,7 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
         const items = [
           ["项目 ID", project.project_id],
           ["标题", project.title],
+          ["画面比例", project.aspect_ratio || "16:9"],
           ["状态", project.status],
           ["场景数", project.scene_count || 0],
           ["Storyboard 有效", project.storyboard_valid ? "yes" : "no"],
@@ -4162,7 +4211,8 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
               story: document.getElementById("story").value,
               provider_ref: document.getElementById("providerRef").value,
               target_duration_sec: parseInt(document.getElementById("targetDuration").value),
-              image_switch_interval_sec: parseInt(document.getElementById("imageSwitchInterval").value)
+              image_switch_interval_sec: parseInt(document.getElementById("imageSwitchInterval").value),
+              aspect_ratio: document.getElementById("aspectRatio").value
             })
           });
           const projectId = data.project && data.project.project_id;
