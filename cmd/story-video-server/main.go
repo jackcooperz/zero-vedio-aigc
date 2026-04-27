@@ -23,7 +23,7 @@ import (
 const (
 	defaultEdgeTTSVoiceName   = "zh-CN-XiaoxiaoNeural"
 	defaultEdgeTTSProviderRef = "edge-tts/" + defaultEdgeTTSVoiceName
-	baseCharsPerSec           = 3.5
+	baseCharsPerSec           = 8.0
 )
 
 type app struct {
