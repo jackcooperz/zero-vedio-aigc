@@ -32,9 +32,11 @@ type app struct {
 }
 
 type createProjectRequest struct {
-	Title       string `json:"title"`
-	Story       string `json:"story"`
-	ProviderRef string `json:"provider_ref"`
+	Title                  string `json:"title"`
+	Story                  string `json:"story"`
+	ProviderRef            string `json:"provider_ref"`
+	TargetDurationSec      int    `json:"target_duration_sec,omitempty"`
+	ImageSwitchIntervalSec int    `json:"image_switch_interval_sec,omitempty"`
 }
 
 type generateStoryboardRequest struct {
@@ -77,6 +79,8 @@ type projectFile struct {
 	Title                    string `json:"title"`
 	Story                    string `json:"story"`
 	ProviderRef              string `json:"provider_ref"`
+	TargetDurationSec        int    `json:"target_duration_sec,omitempty"`
+	ImageSwitchIntervalSec   int    `json:"image_switch_interval_sec,omitempty"`
 	Status                   string `json:"status"`
 	StoryboardPath           string `json:"storyboard_path,omitempty"`
 	StoryboardValid          bool   `json:"storyboard_valid,omitempty"`
@@ -146,6 +150,19 @@ type storyboardValidationResult struct {
 	ValidatedAt string   `json:"validated_at,omitempty"`
 }
 
+type keyframe struct {
+	FrameID          string         `json:"frame_id"`
+	Sequence         int            `json:"sequence"`
+	Prompt           map[string]any `json:"prompt"`
+	Visual           map[string]any `json:"visual"`
+	ImageLocalPath   string         `json:"image_local_path,omitempty"`
+	ImageURL         string         `json:"image_url,omitempty"`
+	ImagePreviewURL  string         `json:"image_preview_url,omitempty"`
+	ImageMimeType    string         `json:"image_mime_type,omitempty"`
+	ImageError       string         `json:"image_error,omitempty"`
+	ImageGeneratedAt string         `json:"image_generated_at,omitempty"`
+}
+
 type sceneFile struct {
 	ProjectID            string         `json:"project_id"`
 	SceneID              string         `json:"scene_id"`
@@ -172,6 +189,7 @@ type sceneFile struct {
 	ImageMimeType        string         `json:"image_mime_type,omitempty"`
 	ImageError           string         `json:"image_error,omitempty"`
 	ImageGeneratedAt     string         `json:"image_generated_at,omitempty"`
+	Keyframes            []keyframe     `json:"keyframes,omitempty"`
 	AudioStatus          string         `json:"audio_status"`
 	AudioProviderRef     string         `json:"audio_provider_ref,omitempty"`
 	VoiceName            string         `json:"voice_name,omitempty"`
@@ -494,13 +512,15 @@ func (a *app) createProject(req createProjectRequest) (projectFile, error) {
 	projectID := fmt.Sprintf("pv_%d", time.Now().UnixMilli())
 	now := time.Now().UTC().Format(time.RFC3339)
 	project := projectFile{
-		ProjectID:   projectID,
-		Title:       strings.TrimSpace(req.Title),
-		Story:       strings.TrimSpace(req.Story),
-		ProviderRef: defaultProviderRef(req.ProviderRef),
-		Status:      "created",
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ProjectID:              projectID,
+		Title:                  strings.TrimSpace(req.Title),
+		Story:                  strings.TrimSpace(req.Story),
+		ProviderRef:            defaultProviderRef(req.ProviderRef),
+		TargetDurationSec:      req.TargetDurationSec,
+		ImageSwitchIntervalSec: req.ImageSwitchIntervalSec,
+		Status:                 "created",
+		CreatedAt:              now,
+		UpdatedAt:              now,
 	}
 
 	projectDir := filepath.Join(a.projectsDir, projectID)
@@ -729,12 +749,52 @@ func (a *app) runZeroTokenStoryboard(project projectFile, req generateStoryboard
 		browserProfileID = "chrome_main"
 	}
 
+	// 第一步：生成基础 storyboard
+	baseStoryboardJSON, err := a.generateBaseStoryboard(project, providerRef, browserProfileID, timeoutMs)
+	if err != nil {
+		return nil, err
+	}
+
+	// 第二步：解析基础 storyboard
+	var baseStoryboard map[string]any
+	if err := json.Unmarshal(baseStoryboardJSON, &baseStoryboard); err != nil {
+		return nil, fmt.Errorf("parse base storyboard: %w", err)
+	}
+
+	// 第三步：计算时长预算并补充关键帧
+	enhancedStoryboard, err := a.enhanceStoryboardWithKeyframes(baseStoryboard, project)
+	if err != nil {
+		return nil, err
+	}
+
+	// 第四步：序列化增强后的 storyboard
+	enhancedJSON, err := json.Marshal(enhancedStoryboard)
+	if err != nil {
+		return nil, fmt.Errorf("marshal enhanced storyboard: %w", err)
+	}
+
+	// 保存增强后的 storyboard
+	normalized, err := normalizeJSON(enhancedJSON)
+	if err != nil {
+		return nil, err
+	}
+	if writeErr := os.WriteFile(a.storyboardExtractedPath(project.ProjectID), append(normalized, '\n'), 0o644); writeErr != nil {
+		log.Printf("write storyboard extracted json failed for %s: %v", project.ProjectID, writeErr)
+	}
+
+	return normalized, nil
+}
+
+func (a *app) generateBaseStoryboard(project projectFile, providerRef, browserProfileID string, timeoutMs int) ([]byte, error) {
+	// 构建基础 storyboard 提示词
+	basePrompt := buildBaseStoryboardPrompt(project)
+
 	payload := map[string]any{
-		"requestId":   fmt.Sprintf("storyboard_%d", time.Now().UnixMilli()),
+		"requestId":   fmt.Sprintf("storyboard_base_%d", time.Now().UnixMilli()),
 		"providerRef": providerRef,
 		"capability":  "text_image",
 		"input": map[string]any{
-			"prompt": buildStoryboardPrompt(project),
+			"prompt": basePrompt,
 		},
 		"runtimeOptions": map[string]any{
 			"browserProfileId":   browserProfileID,
@@ -776,19 +836,191 @@ func (a *app) runZeroTokenStoryboard(project projectFile, req generateStoryboard
 		if err != nil {
 			return nil, err
 		}
-		if writeErr := os.WriteFile(a.storyboardExtractedPath(project.ProjectID), append(normalized, '\n'), 0o644); writeErr != nil {
-			log.Printf("write storyboard extracted json failed for %s: %v", project.ProjectID, writeErr)
-		}
 		return normalized, nil
 	}
 	extracted, err := extractJSONObject(resp.Result.Output.Text)
 	if err != nil {
 		return nil, err
 	}
-	if writeErr := os.WriteFile(a.storyboardExtractedPath(project.ProjectID), append(extracted, '\n'), 0o644); writeErr != nil {
-		log.Printf("write storyboard extracted json failed for %s: %v", project.ProjectID, writeErr)
-	}
 	return extracted, nil
+}
+
+func (a *app) enhanceStoryboardWithKeyframes(storyboard map[string]any, project projectFile) (map[string]any, error) {
+	// 获取场景列表
+	scenes, ok := storyboard["scenes"].([]any)
+	if !ok {
+		return storyboard, nil
+	}
+
+	// 计算总字数预算
+	totalWordsBudget := a.calculateTotalWordsBudget(project)
+
+	// 计算每个场景的字数预算
+	sceneWordBudgets := a.calculateSceneWordBudgets(scenes, totalWordsBudget)
+
+	// 为每个场景补充关键帧
+	enhancedScenes := make([]any, 0, len(scenes))
+	for i, scene := range scenes {
+		sceneMap, ok := scene.(map[string]any)
+		if !ok {
+			enhancedScenes = append(enhancedScenes, scene)
+			continue
+		}
+
+		// 计算场景时长预算
+		sceneDurationBudget := a.calculateSceneDurationBudget(sceneMap, sceneWordBudgets[i])
+
+		// 计算需要的关键帧数量
+		imageCount := a.calculateImageCount(sceneDurationBudget, project.ImageSwitchIntervalSec)
+
+		// 如果需要多个关键帧，生成关键帧
+		if imageCount > 1 {
+			enhancedScene, err := a.generateKeyframesForScene(sceneMap, imageCount, project)
+			if err != nil {
+				log.Printf("generate keyframes for scene %d failed: %v", i, err)
+				enhancedScenes = append(enhancedScenes, scene)
+				continue
+			}
+			enhancedScenes = append(enhancedScenes, enhancedScene)
+		} else {
+			enhancedScenes = append(enhancedScenes, scene)
+		}
+	}
+
+	// 更新 storyboard 中的场景
+	storyboard["scenes"] = enhancedScenes
+	return storyboard, nil
+}
+
+func (a *app) calculateTotalWordsBudget(project projectFile) int {
+	// 根据目标时长和语速计算总字数预算
+	// 假设平均语速为 200 字/分钟
+	wordsPerMinute := 200
+	totalMinutes := float64(project.TargetDurationSec) / 60.0
+	totalWords := int(totalMinutes * float64(wordsPerMinute))
+	return totalWords
+}
+
+func (a *app) calculateSceneWordBudgets(scenes []any, totalWordsBudget int) []int {
+	// 简单分配：根据场景数量平均分配
+	sceneCount := len(scenes)
+	if sceneCount == 0 {
+		return []int{}
+	}
+
+	baseBudget := totalWordsBudget / sceneCount
+	remainder := totalWordsBudget % sceneCount
+
+	budgets := make([]int, sceneCount)
+	for i := range budgets {
+		budgets[i] = baseBudget
+		if i < remainder {
+			budgets[i]++
+		}
+	}
+
+	return budgets
+}
+
+func (a *app) calculateSceneDurationBudget(scene map[string]any, wordBudget int) float64 {
+	// 根据字数预算计算场景时长预算
+	// 假设平均语速为 200 字/分钟
+	wordsPerMinute := 200
+	durationMinutes := float64(wordBudget) / float64(wordsPerMinute)
+	durationSeconds := durationMinutes * 60.0
+	return durationSeconds
+}
+
+func (a *app) calculateImageCount(sceneDuration float64, switchInterval int) int {
+	if switchInterval <= 0 {
+		switchInterval = 3 // 默认 3 秒
+	}
+
+	imageCount := int(math.Ceil(sceneDuration / float64(switchInterval)))
+
+	// 限制关键帧数量在 1-6 之间
+	if imageCount < 1 {
+		imageCount = 1
+	} else if imageCount > 6 {
+		imageCount = 6
+	}
+
+	return imageCount
+}
+
+func (a *app) generateKeyframesForScene(scene map[string]any, imageCount int, project projectFile) (map[string]any, error) {
+	// 构建关键帧生成提示词
+	keyframesPrompt := buildKeyframesPrompt(scene, imageCount)
+
+	// 调用 zero-token 生成关键帧
+	providerRef := "doubao/web" // 使用默认 provider
+	browserProfileID := "chrome_main"
+	timeoutMs := 300000
+
+	payload := map[string]any{
+		"requestId":   fmt.Sprintf("keyframes_%d", time.Now().UnixMilli()),
+		"providerRef": providerRef,
+		"capability":  "text_image",
+		"input": map[string]any{
+			"prompt": keyframesPrompt,
+		},
+		"runtimeOptions": map[string]any{
+			"browserProfileId":   browserProfileID,
+			"timeoutMs":          timeoutMs,
+			"retryLimit":         1,
+			"saveDebugArtifacts": false,
+		},
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return scene, err
+	}
+
+	cmd := exec.Command("node", a.zeroTokenCLIPath, "generate")
+	cmd.Dir = a.rootDir
+	cmd.Stdin = bytes.NewReader(body)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return scene, fmt.Errorf("zero-token bridge failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+
+	var resp bridgeResponse
+	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
+		return scene, fmt.Errorf("decode zero-token response: %w", err)
+	}
+	if !resp.OK {
+		return scene, fmt.Errorf("zero-token bridge error: %s %s", resp.Name, resp.Error)
+	}
+
+	// 解析关键帧
+	var keyframesResp map[string]any
+	if len(resp.Result.Output.JSON) > 0 && string(resp.Result.Output.JSON) != "null" {
+		if err := json.Unmarshal(resp.Result.Output.JSON, &keyframesResp); err != nil {
+			return scene, err
+		}
+	} else {
+		extracted, err := extractJSONObject(resp.Result.Output.Text)
+		if err != nil {
+			return scene, err
+		}
+		if err := json.Unmarshal(extracted, &keyframesResp); err != nil {
+			return scene, err
+		}
+	}
+
+	// 获取关键帧数组
+	keyframes, ok := keyframesResp["keyframes"].([]any)
+	if !ok {
+		return scene, nil
+	}
+
+	// 更新场景的关键帧
+	scene["keyframes"] = keyframes
+	return scene, nil
 }
 
 func (a *app) writeStoryboardDebugOutput(projectID string, output zeroTokenGenerateOutput) error {
@@ -947,8 +1179,22 @@ func (a *app) writeScenePlan(projectID string, scenes []sceneFile, now string) (
 		if err := writeJSONFile(path, scene); err != nil {
 			return nil, err
 		}
+		// 为每个关键帧创建单独的图片生成任务
+		if len(scene.Keyframes) > 0 {
+			for i := range scene.Keyframes {
+				taskID := fmt.Sprintf("%s_kf%d", scene.SceneID, i)
+				tasks = append(tasks,
+					newTask("scene_image_generation", taskID, "pending", fmt.Sprintf("Scene keyframe %d image generation queued", i+1), now),
+				)
+			}
+		} else {
+			// 保持原有逻辑，为没有关键帧的场景创建单个图片生成任务
+			tasks = append(tasks,
+				newTask("scene_image_generation", scene.SceneID, "pending", "Scene image generation queued", now),
+			)
+		}
+		// 音频和视频合成任务保持不变
 		tasks = append(tasks,
-			newTask("scene_image_generation", scene.SceneID, "pending", "Scene image generation queued", now),
 			newTask("scene_audio_generation", scene.SceneID, "pending", "Scene audio generation queued", now),
 			newTask("scene_video_compositing", scene.SceneID, "pending", "Scene video compositing queued", now),
 		)
@@ -968,12 +1214,34 @@ func (a *app) generateSceneImage(projectID string, sceneID string, req generateS
 		return sceneFile{}, errors.New("storyboard is not ready or not valid")
 	}
 
-	scene, err := a.readSceneFile(projectID, sceneID)
+	// 解析 sceneID，判断是否是关键帧任务
+	var baseSceneID string
+	var keyframeIndex int
+	if strings.Contains(sceneID, "_kf") {
+		parts := strings.Split(sceneID, "_kf")
+		baseSceneID = parts[0]
+		keyframeIndex, _ = strconv.Atoi(parts[1])
+	} else {
+		baseSceneID = sceneID
+		keyframeIndex = -1
+	}
+
+	scene, err := a.readSceneFile(projectID, baseSceneID)
 	if err != nil {
 		return sceneFile{}, err
 	}
-	if scene.ImageStatus == "success" && !req.Force {
-		return scene, nil
+
+	// 检查是否是关键帧任务
+	if keyframeIndex >= 0 && keyframeIndex < len(scene.Keyframes) {
+		// 关键帧任务
+		if scene.Keyframes[keyframeIndex].ImageLocalPath != "" && !req.Force {
+			return scene, nil
+		}
+	} else if keyframeIndex == -1 {
+		// 普通场景任务
+		if scene.ImageStatus == "success" && !req.Force {
+			return scene, nil
+		}
 	}
 
 	tasks, err := a.readTasks(projectID)
@@ -982,10 +1250,17 @@ func (a *app) generateSceneImage(projectID string, sceneID string, req generateS
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	scene.Status = "image_generating"
-	scene.ImageStatus = "running"
-	scene.ImageError = ""
-	scene.UpdatedAt = now
+	if keyframeIndex >= 0 && keyframeIndex < len(scene.Keyframes) {
+		// 关键帧任务状态更新
+		scene.Status = "image_generating"
+		scene.UpdatedAt = now
+	} else {
+		// 普通场景任务状态更新
+		scene.Status = "image_generating"
+		scene.ImageStatus = "running"
+		scene.ImageError = ""
+		scene.UpdatedAt = now
+	}
 	if writeErr := a.writeSceneFile(projectID, scene); writeErr != nil {
 		return sceneFile{}, writeErr
 	}
@@ -998,14 +1273,31 @@ func (a *app) generateSceneImage(projectID string, sceneID string, req generateS
 	if err != nil {
 		return sceneFile{}, err
 	}
-	prompt := buildSceneImagePrompt(storyboardRoot, scene)
+
+	var prompt string
+	if keyframeIndex >= 0 && keyframeIndex < len(scene.Keyframes) {
+		// 为关键帧生成提示词
+		keyframe := scene.Keyframes[keyframeIndex]
+		prompt = buildKeyframeImagePrompt(storyboardRoot, scene, keyframe)
+	} else {
+		// 为普通场景生成提示词
+		prompt = buildSceneImagePrompt(storyboardRoot, scene)
+	}
+
 	image, err := a.runZeroTokenSceneImage(project, scene, req, prompt, resolveSceneAspectRatio(storyboardRoot))
 	if err != nil {
 		failedAt := time.Now().UTC().Format(time.RFC3339)
-		scene.Status = "scene_tasks_ready"
-		scene.ImageStatus = "failed"
-		scene.ImageError = err.Error()
-		scene.UpdatedAt = failedAt
+		if keyframeIndex >= 0 && keyframeIndex < len(scene.Keyframes) {
+			// 关键帧任务失败
+			scene.Status = "scene_tasks_ready"
+			scene.UpdatedAt = failedAt
+		} else {
+			// 普通场景任务失败
+			scene.Status = "scene_tasks_ready"
+			scene.ImageStatus = "failed"
+			scene.ImageError = err.Error()
+			scene.UpdatedAt = failedAt
+		}
 		_ = a.writeSceneFile(projectID, scene)
 		tasks = updateTaskStatus(tasks, "scene_image_generation", sceneID, "failed", "Scene image generation failed", err.Error(), failedAt)
 		_ = a.writeTasks(projectID, tasks)
@@ -1015,10 +1307,17 @@ func (a *app) generateSceneImage(projectID string, sceneID string, req generateS
 	localPath, previewURL, mimeType, err := a.persistGeneratedImage(projectID, sceneID, image)
 	if err != nil {
 		failedAt := time.Now().UTC().Format(time.RFC3339)
-		scene.Status = "scene_tasks_ready"
-		scene.ImageStatus = "failed"
-		scene.ImageError = err.Error()
-		scene.UpdatedAt = failedAt
+		if keyframeIndex >= 0 && keyframeIndex < len(scene.Keyframes) {
+			// 关键帧任务失败
+			scene.Status = "scene_tasks_ready"
+			scene.UpdatedAt = failedAt
+		} else {
+			// 普通场景任务失败
+			scene.Status = "scene_tasks_ready"
+			scene.ImageStatus = "failed"
+			scene.ImageError = err.Error()
+			scene.UpdatedAt = failedAt
+		}
 		_ = a.writeSceneFile(projectID, scene)
 		tasks = updateTaskStatus(tasks, "scene_image_generation", sceneID, "failed", "Scene image download failed", err.Error(), failedAt)
 		_ = a.writeTasks(projectID, tasks)
@@ -1026,18 +1325,41 @@ func (a *app) generateSceneImage(projectID string, sceneID string, req generateS
 	}
 
 	finishedAt := time.Now().UTC().Format(time.RFC3339)
-	scene.Status = "image_ready"
-	scene.ImageStatus = "success"
-	scene.ImageProviderRef = resolveImageProviderRef(project.ProviderRef, req.ProviderRef)
-	scene.ImagePrompt = prompt
-	scene.ImageURL = image.URL
-	scene.ImageLocalPath = localPath
-	scene.ImagePreviewURL = previewURL
-	scene.ImageMimeType = mimeType
-	scene.ImageGeneratedAt = finishedAt
-	scene.ImageError = ""
+	if keyframeIndex >= 0 && keyframeIndex < len(scene.Keyframes) {
+		// 关键帧任务成功
+		scene.Keyframes[keyframeIndex].ImageLocalPath = localPath
+		scene.Keyframes[keyframeIndex].ImageURL = image.URL
+		scene.Keyframes[keyframeIndex].ImagePreviewURL = previewURL
+		scene.Keyframes[keyframeIndex].ImageMimeType = mimeType
+		scene.Keyframes[keyframeIndex].ImageGeneratedAt = finishedAt
+		scene.Keyframes[keyframeIndex].ImageError = ""
+		scene.Status = "image_ready"
+		scene.UpdatedAt = finishedAt
+		// 检查是否所有关键帧都已完成
+		allKeyframesDone := true
+		for _, kf := range scene.Keyframes {
+			if kf.ImageLocalPath == "" {
+				allKeyframesDone = false
+				break
+			}
+		}
+		if allKeyframesDone {
+			scene.ImageStatus = "success"
+		}
+	} else {
+		// 普通场景任务成功
+		scene.Status = "image_ready"
+		scene.ImageStatus = "success"
+		scene.ImageProviderRef = resolveImageProviderRef(project.ProviderRef, req.ProviderRef)
+		scene.ImagePrompt = prompt
+		scene.ImageURL = image.URL
+		scene.ImageLocalPath = localPath
+		scene.ImagePreviewURL = previewURL
+		scene.ImageMimeType = mimeType
+		scene.ImageGeneratedAt = finishedAt
+		scene.ImageError = ""
+	}
 	invalidateSceneDerivedMedia(&scene)
-	scene.UpdatedAt = finishedAt
 	if err := a.writeSceneFile(projectID, scene); err != nil {
 		return sceneFile{}, err
 	}
@@ -1192,8 +1514,17 @@ func (a *app) composeSceneVideo(projectID string, sceneID string, req composeSce
 	if (scene.ComposeStatus == "success" || scene.ComposeStatus == "preview_ready") && !req.Force && !isSceneDerivedMediaStale(scene) {
 		return scene, nil
 	}
-	if scene.ImageLocalPath == "" || !fileExists(scene.ImageLocalPath) {
-		return sceneFile{}, errors.New("scene image is not ready")
+	// 检查图片是否就绪（支持关键帧和普通场景）
+	if len(scene.Keyframes) > 0 {
+		for _, kf := range scene.Keyframes {
+			if kf.ImageLocalPath == "" || !fileExists(kf.ImageLocalPath) {
+				return sceneFile{}, errors.New("scene keyframe image is not ready")
+			}
+		}
+	} else {
+		if scene.ImageLocalPath == "" || !fileExists(scene.ImageLocalPath) {
+			return sceneFile{}, errors.New("scene image is not ready")
+		}
 	}
 	if scene.AudioLocalPath == "" || !fileExists(scene.AudioLocalPath) {
 		return sceneFile{}, errors.New("scene audio is not ready")
@@ -2150,25 +2481,71 @@ func runFFmpegSceneCompose(ffmpegPath string, scene sceneFile, outputPath string
 	if durationSec <= 0 {
 		durationSec = float64(maxInt(scene.DurationHintSec, 3))
 	}
-	cameraMotion := resolveSceneCameraMotion(scene)
-	filter := buildSceneVideoFilter(scene.SubtitleLocalPath, width, height, fps, cameraMotion, subtitleStyle)
-	args := []string{
-		"-y",
-		"-loop", "1",
-		"-i", scene.ImageLocalPath,
-		"-i", scene.AudioLocalPath,
-		"-t", fmt.Sprintf("%.3f", durationSec),
-		"-filter_complex", filter,
-		"-map", "[vout]",
-		"-map", "1:a:0",
-		"-c:v", "libx264",
-		"-preset", "veryfast",
-		"-tune", "stillimage",
-		"-c:a", "aac",
-		"-movflags", "+faststart",
-		"-shortest",
-		outputPath,
+
+	// 检查是否有多个关键帧
+	var args []string
+	var filter string
+
+	if len(scene.Keyframes) > 0 {
+		// 有多张图片，使用关键帧
+		imageCount := len(scene.Keyframes)
+		frameDurationSec := durationSec / float64(imageCount)
+
+		// 构建输入参数
+		args = []string{"-y"}
+		for _, keyframe := range scene.Keyframes {
+			args = append(args, "-loop", "1", "-i", keyframe.ImageLocalPath)
+		}
+		args = append(args, "-i", scene.AudioLocalPath)
+
+		// 构建滤镜
+		filterParts := make([]string, 0, imageCount*2+5)
+		for i := 0; i < imageCount; i++ {
+			// 为每个图片应用缩放和移动效果
+			cameraMotion := resolveSceneCameraMotion(scene)
+			motionFilter := buildCameraMotionFilter(width, height, fps, cameraMotion)
+			filterParts = append(filterParts, fmt.Sprintf("[%d:v]scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,setsar=1,%s[v%d]", i, width, height, width, height, motionFilter, i))
+			// 为每个图片设置时长
+			filterParts = append(filterParts, fmt.Sprintf("[v%d]trim=duration=%.3f,setpts=PTS-STARTPTS[v%dtrim]", i, frameDurationSec, i))
+		}
+
+		// 拼接所有图片
+		if imageCount == 1 {
+			filterParts = append(filterParts, "[v0trim][vout]")
+		} else {
+			// 拼接多个图片
+			concatInputs := ""
+			for i := 0; i < imageCount; i++ {
+				concatInputs += fmt.Sprintf("[v%dtrim]", i)
+			}
+			filterParts = append(filterParts, fmt.Sprintf("%sconcat=n=%d:v=1:a=0[vconcat]", concatInputs, imageCount))
+			// 添加字幕
+			if scene.SubtitleLocalPath != "" && fileExists(scene.SubtitleLocalPath) {
+				filterParts = append(filterParts, fmt.Sprintf("[vconcat]subtitles='%s':force_style='%s',format=yuv420p[vout]", escapeFFmpegFilterPath(scene.SubtitleLocalPath), escapeFFmpegForceStyle(subtitleStyle)))
+			} else {
+				filterParts = append(filterParts, "[vconcat]format=yuv420p[vout]")
+			}
+		}
+
+		filter = strings.Join(filterParts, ";")
+		args = append(args, "-filter_complex", filter)
+	} else {
+		// 只有一张图片，使用原有逻辑
+		cameraMotion := resolveSceneCameraMotion(scene)
+		filter = buildSceneVideoFilter(scene.SubtitleLocalPath, width, height, fps, cameraMotion, subtitleStyle)
+		args = []string{
+			"-y",
+			"-loop", "1",
+			"-i", scene.ImageLocalPath,
+			"-i", scene.AudioLocalPath,
+			"-t", fmt.Sprintf("%.3f", durationSec),
+			"-filter_complex", filter,
+		}
 	}
+
+	// 通用参数
+	args = append(args, "-map", "[vout]", "-map", fmt.Sprintf("%d:a:0", len(scene.Keyframes)), "-c:v", "libx264", "-preset", "veryfast", "-tune", "stillimage", "-c:a", "aac", "-movflags", "+faststart", "-shortest", outputPath)
+
 	cmd := exec.Command(ffmpegPath, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -2211,19 +2588,19 @@ func resolveSceneCameraMotion(scene sceneFile) string {
 }
 
 func buildSubtitleForceStyle(storyboard map[string]any) string {
-	fontSize := 42
-	marginV := 36
+	fontSize := 24
+	marginV := 18
 	if videoProfile, ok := storyboard["video_profile"].(map[string]any); ok {
 		if subtitleStyle, ok := videoProfile["subtitle_style"].(map[string]any); ok {
 			if size, ok := requiredPositiveIntField(subtitleStyle, "font_size"); ok {
 				fontSize = size
 			}
 			if position, ok := requiredStringField(subtitleStyle, "position"); ok && position == "bottom-center" {
-				marginV = 36
+				marginV = 18
 			}
 		}
 	}
-	return fmt.Sprintf("FontName=Noto Sans CJK SC,FontSize=%d,PrimaryColour=&H00FFFFFF,OutlineColour=&H40000000,BackColour=&H20000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV=%d", fontSize, marginV)
+	return fmt.Sprintf("FontName=Noto Sans CJK SC,FontSize=%d,PrimaryColour=&H00FFFFFF,OutlineColour=&H78000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=2,MarginV=%d", fontSize, marginV)
 }
 
 func escapeFFmpegFilterPath(path string) string {
@@ -2309,6 +2686,42 @@ func runFFmpegFinalCompose(ffmpegPath string, scenes []sceneFile, outputPath str
 }
 
 func writeScenePreviewHTML(path string, projectID string, scene sceneFile) error {
+	// 构建图片轮播部分
+	var imageSlider string
+	if len(scene.Keyframes) > 0 {
+		// 多张图片，生成轮播
+		imageSlider = `<div class="image-slider">
+`
+		for i, keyframe := range scene.Keyframes {
+			var displayStyle string
+			if i == 0 {
+				displayStyle = "style=\"display: block;\""
+			} else {
+				displayStyle = ""
+			}
+			imageSlider += fmt.Sprintf(`			<img src="%s" alt="关键帧 %d" class="slide" %s />
+`, keyframe.ImagePreviewURL, i+1, displayStyle)
+		}
+		imageSlider += `		</div>
+		<script>
+			let currentSlide = 0;
+			const slides = document.querySelectorAll('.slide');
+			const totalSlides = slides.length;
+			
+			function nextSlide() {
+				slides[currentSlide].style.display = 'none';
+				currentSlide = (currentSlide + 1) % totalSlides;
+				slides[currentSlide].style.display = 'block';
+			}
+			
+			// 自动切换图片，每张图片显示3秒
+			setInterval(nextSlide, 3000);
+		</script>`
+	} else {
+		// 单张图片
+		imageSlider = fmt.Sprintf(`<img src="%s" alt="%s" />`, scene.ImagePreviewURL, html.EscapeString(scene.Title))
+	}
+
 	body := fmt.Sprintf(`<!doctype html>
 <html lang="zh-CN">
   <head>
@@ -2320,6 +2733,8 @@ func writeScenePreviewHTML(path string, projectID string, scene sceneFile) error
       .frame { min-height: 100vh; display: grid; place-items: center; padding: 24px; box-sizing: border-box; }
       .card { width: min(92vw, 820px); background: #0f172a; border: 1px solid #26324f; border-radius: 18px; overflow: hidden; box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35); }
       img { width: 100%%; display: block; background: #111827; }
+      .image-slider { position: relative; width: 100%%; overflow: hidden; }
+      .slide { display: none; width: 100%%; }
       .meta { padding: 18px; }
       h1 { margin: 0 0 10px; font-size: 22px; }
       p { margin: 8px 0; line-height: 1.6; color: #d7def5; }
@@ -2331,7 +2746,7 @@ func writeScenePreviewHTML(path string, projectID string, scene sceneFile) error
   <body>
     <div class="frame">
       <section class="card">
-        <img src="%s" alt="%s" />
+        %s
         <div class="meta">
           <h1>%s</h1>
           <p>%s</p>
@@ -2344,7 +2759,7 @@ func writeScenePreviewHTML(path string, projectID string, scene sceneFile) error
     </div>
   </body>
 </html>
-`, html.EscapeString(scene.Title), scene.ImagePreviewURL, html.EscapeString(scene.Title), html.EscapeString(scene.Title), html.EscapeString(scene.Narration), html.EscapeString(preferredSubtitleText(scene)), scene.AudioPreviewURL, html.EscapeString(projectID), html.EscapeString(scene.SceneID))
+`, html.EscapeString(scene.Title), imageSlider, html.EscapeString(scene.Title), html.EscapeString(scene.Narration), html.EscapeString(preferredSubtitleText(scene)), scene.AudioPreviewURL, html.EscapeString(projectID), html.EscapeString(scene.SceneID))
 	return os.WriteFile(path, []byte(body), 0o644)
 }
 
@@ -2681,6 +3096,27 @@ func validateStoryboard(raw []byte, projectID string, validatedAt string) (story
 			continue
 		}
 
+		// 处理 keyframes 字段
+		var keyframes []keyframe
+		if keyframesValue, ok := sceneMap["keyframes"]; ok {
+			if keyframesArray, ok := keyframesValue.([]any); ok {
+				for _, kfItem := range keyframesArray {
+					if kfMap, ok := kfItem.(map[string]any); ok {
+						frameID, _ := requiredStringField(kfMap, "frame_id")
+						seq, _ := requiredPositiveIntField(kfMap, "sequence")
+						prompt, _ := requiredObjectField(kfMap, "prompt")
+						visual, _ := requiredObjectField(kfMap, "visual")
+						keyframes = append(keyframes, keyframe{
+							FrameID:  frameID,
+							Sequence: seq,
+							Prompt:   prompt,
+							Visual:   visual,
+						})
+					}
+				}
+			}
+		}
+
 		scenes = append(scenes, sceneFile{
 			ProjectID:       projectID,
 			SceneID:         sceneID,
@@ -2701,6 +3137,7 @@ func validateStoryboard(raw []byte, projectID string, validatedAt string) (story
 			ImageStatus:     "pending",
 			AudioStatus:     "pending",
 			ComposeStatus:   "pending",
+			Keyframes:       keyframes,
 			CreatedAt:       validatedAt,
 			UpdatedAt:       validatedAt,
 		})
@@ -2775,7 +3212,257 @@ func requiredPositiveIntField(obj map[string]any, key string) (int, bool) {
 	}
 }
 
+func buildBaseStoryboardPrompt(project projectFile) string {
+	var durationInfo string
+	if project.TargetDurationSec > 0 {
+		durationInfo = fmt.Sprintf("- 目标视频总时长：%d 秒\n", project.TargetDurationSec)
+	}
+	var imageSwitchInfo string
+	if project.ImageSwitchIntervalSec > 0 {
+		imageSwitchInfo = fmt.Sprintf("- 图片切换间隔：%d 秒\n", project.ImageSwitchIntervalSec)
+	}
+	return strings.TrimSpace(fmt.Sprintf(`
+请将下面的儿童故事转换为严格 JSON 的 storyboard.json。
+
+必须满足：
+1. 只返回 JSON，不要返回 markdown，不要解释。
+2. 顶层必须包含：meta, project, global_style, character_bible, audio_profile, video_profile, render_rules, scenes。
+3. scenes 必须是数组，每个 scene 必须包含：scene_id, sequence, title, story_function, narration, subtitle, duration_hint_sec, characters, objects, environment, visual, prompt, audio, effects。
+4. environment 必须是 object，不能是 string。visual 必须是 object，不能是 string。effects 必须是 object，不能是 string。
+5. prompt 必须是 object，并且必须包含：subject_prompt, scene_prompt, full_prompt。subject_prompt 和 scene_prompt 必须为非空字符串；full_prompt 先返回空字符串。
+6. audio 必须是 object。
+7. 内容适合儿童故事视频，语气温和，结构清晰。
+8. JSON 的第一个字符必须是 {，最后一个字符必须是 }。
+
+scene 的最小合法结构示例：
+{
+  "scene_id": "s01",
+  "sequence": 1,
+  "title": "场景标题",
+  "story_function": "这一幕承担的叙事作用",
+  "narration": "旁白全文",
+  "subtitle": "字幕文本",
+  "duration_hint_sec": 8,
+  "characters": ["c01"],
+  "objects": ["星星瓶"],
+  "environment": {
+    "location": "夜空",
+    "time_of_day": "夜晚",
+    "weather": "晴朗",
+    "atmosphere": "梦幻温馨"
+  },
+  "visual": {
+    "shot_type": "全景",
+    "camera_motion": "缓慢推进",
+    "composition": "主角位于画面中央",
+    "action": "小云朵轻轻漂浮，望向小星星"
+  },
+  "prompt": {
+    "subject_prompt": "主角与关键物体的画面描述",
+    "scene_prompt": "场景环境、镜头和氛围描述",
+    "full_prompt": ""
+  },
+  "audio": {
+    "bgm": "背景音乐描述",
+    "voice": "人声描述",
+    "sound_effect": "音效描述"
+  },
+  "effects": {
+    "motion": "元素运动效果",
+    "lighting": "光效描述",
+    "post_process": "后期风格描述"
+  }
+}
+
+注意：
+- 不要把 environment、visual、effects 写成一句话字符串。
+- 不要遗漏 prompt.subject_prompt 或 prompt.scene_prompt。
+- character_bible、audio_profile、video_profile、render_rules 也要保持 object/array 结构，不要输出自然语言段落。
+- 根据目标视频总时长控制故事的长度和场景数量，确保 narration 的总字数适合目标时长。
+
+项目信息：
+- project_id: %s
+- title: %s
+%s%s
+原始故事：
+%s
+`, project.ProjectID, project.Title, durationInfo, imageSwitchInfo, project.Story))
+}
+
+func buildKeyframesPrompt(scene map[string]any, imageCount int) string {
+	title := ""
+	narration := ""
+	storyFunction := ""
+	characters := []string{}
+	objects := []string{}
+	environment := ""
+	visual := ""
+
+	if t, ok := scene["title"].(string); ok {
+		title = t
+	}
+	if n, ok := scene["narration"].(string); ok {
+		narration = n
+	}
+	if sf, ok := scene["story_function"].(string); ok {
+		storyFunction = sf
+	}
+	if chars, ok := scene["characters"].([]any); ok {
+		for _, c := range chars {
+			if str, ok := c.(string); ok {
+				characters = append(characters, str)
+			}
+		}
+	}
+	if objs, ok := scene["objects"].([]any); ok {
+		for _, o := range objs {
+			if str, ok := o.(string); ok {
+				objects = append(objects, str)
+			}
+		}
+	}
+	if env, ok := scene["environment"].(map[string]any); ok {
+		location := ""
+		timeOfDay := ""
+		weather := ""
+		atmosphere := ""
+		if l, ok := env["location"].(string); ok {
+			location = l
+		}
+		if t, ok := env["time_of_day"].(string); ok {
+			timeOfDay = t
+		}
+		if w, ok := env["weather"].(string); ok {
+			weather = w
+		}
+		if a, ok := env["atmosphere"].(string); ok {
+			atmosphere = a
+		}
+		environment = fmt.Sprintf("%s, %s, %s, %s", location, timeOfDay, weather, atmosphere)
+	}
+	if vis, ok := scene["visual"].(map[string]any); ok {
+		shotType := ""
+		cameraMotion := ""
+		composition := ""
+		action := ""
+		if st, ok := vis["shot_type"].(string); ok {
+			shotType = st
+		}
+		if cm, ok := vis["camera_motion"].(string); ok {
+			cameraMotion = cm
+		}
+		if c, ok := vis["composition"].(string); ok {
+			composition = c
+		}
+		if a, ok := vis["action"].(string); ok {
+			action = a
+		}
+		visual = fmt.Sprintf("%s, %s, %s, %s", shotType, cameraMotion, composition, action)
+	}
+
+	return strings.TrimSpace(fmt.Sprintf(`
+为以下场景生成 %d 个关键帧，每个关键帧都应该有独立的视觉描述和提示词。
+
+场景信息：
+- 场景标题：%s
+- 故事功能：%s
+- 旁白：%s
+- 角色：%s
+- 物体：%s
+- 环境：%s
+- 视觉描述：%s
+
+请返回严格的 JSON 格式，只包含 keyframes 数组，每个 keyframe 必须包含：
+- frame_id：唯一标识符，格式为 "scene_id_f01"
+- sequence：序列编号，从 1 开始
+- prompt：对象，包含 subject_prompt、scene_prompt、full_prompt
+- visual：对象，包含 shot_type、camera_motion、composition、action
+
+示例输出格式：
+{
+  "keyframes": [
+    {
+      "frame_id": "s01_f01",
+      "sequence": 1,
+      "prompt": {
+        "subject_prompt": "主角与关键物体的画面描述",
+        "scene_prompt": "场景环境、镜头和氛围描述",
+        "full_prompt": ""
+      },
+      "visual": {
+        "shot_type": "全景",
+        "camera_motion": "缓慢推进",
+        "composition": "主角位于画面中央",
+        "action": "小云朵轻轻漂浮，望向小星星"
+      }
+    }
+  ]
+}
+
+请确保：
+1. 每个关键帧都有独特的视觉描述
+2. 关键帧之间的动作有连贯性
+3. 所有关键帧都符合场景的整体氛围
+4. 只返回 JSON，不要返回其他内容
+`, imageCount, title, storyFunction, narration, strings.Join(characters, ", "), strings.Join(objects, ", "), environment, visual))
+}
+
+func buildKeyframeImagePrompt(storyboardRoot map[string]any, scene sceneFile, keyframe keyframe) string {
+	subjectPrompt := ""
+	scenePrompt := ""
+
+	if keyframe.Prompt != nil {
+		if sp, ok := keyframe.Prompt["subject_prompt"].(string); ok {
+			subjectPrompt = sp
+		}
+		if sp, ok := keyframe.Prompt["scene_prompt"].(string); ok {
+			scenePrompt = sp
+		}
+	}
+
+	if subjectPrompt == "" {
+		subjectPrompt = scene.Prompt["subject_prompt"].(string)
+	}
+	if scenePrompt == "" {
+		scenePrompt = scene.Prompt["scene_prompt"].(string)
+	}
+
+	return strings.TrimSpace(fmt.Sprintf(`
+为儿童故事视频生成场景关键帧图片。
+
+场景信息：
+- 场景标题：%s
+- 故事功能：%s
+- 旁白：%s
+- 角色：%s
+- 物体：%s
+- 环境：%s
+
+关键帧信息：
+- 关键帧序号：%d
+- 视觉描述：%s
+
+请生成符合以下要求的图片：
+1. 风格适合儿童故事，色彩明亮，画面温馨
+2. 构图清晰，主体突出
+3. 符合场景的环境和氛围
+4. 展现关键帧的具体动作或细节
+
+提示词：
+- 主体提示：%s
+- 场景提示：%s
+`, scene.Title, scene.StoryFunction, scene.Narration, strings.Join(scene.Characters, ", "), strings.Join(scene.Objects, ", "), fmt.Sprintf("%s, %s, %s, %s", scene.Environment["location"], scene.Environment["time_of_day"], scene.Environment["weather"], scene.Environment["atmosphere"]), keyframe.Sequence, fmt.Sprintf("%s, %s, %s, %s", keyframe.Visual["shot_type"], keyframe.Visual["camera_motion"], keyframe.Visual["composition"], keyframe.Visual["action"]), subjectPrompt, scenePrompt))
+}
+
 func buildStoryboardPrompt(project projectFile) string {
+	var durationInfo string
+	if project.TargetDurationSec > 0 {
+		durationInfo = fmt.Sprintf("- 目标视频总时长：%d 秒\n", project.TargetDurationSec)
+	}
+	var imageSwitchInfo string
+	if project.ImageSwitchIntervalSec > 0 {
+		imageSwitchInfo = fmt.Sprintf("- 图片切换间隔：%d 秒\n", project.ImageSwitchIntervalSec)
+	}
 	return strings.TrimSpace(fmt.Sprintf(`
 请将下面的儿童故事转换为严格 JSON 的 storyboard.json。
 
@@ -2837,10 +3524,10 @@ scene 的最小合法结构示例：
 项目信息：
 - project_id: %s
 - title: %s
-
+%s%s
 原始故事：
 %s
-`, project.ProjectID, project.Title, project.Story))
+`, project.ProjectID, project.Title, durationInfo, imageSwitchInfo, project.Story))
 }
 
 func decodeJSONBody(r io.Reader, target any) error {
@@ -3203,6 +3890,12 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
           <label for="providerRef">Storyboard Provider</label>
           <input id="providerRef" value="doubao/web" />
 
+          <label for="targetDuration">目标视频时长（秒）</label>
+          <input id="targetDuration" type="number" min="1" value="60" />
+
+          <label for="imageSwitchInterval">图片切换间隔（秒）</label>
+          <input id="imageSwitchInterval" type="number" min="1" value="3" />
+
           <button id="createBtn">创建项目</button>
           <span class="status" id="statusText">等待操作</span>
         </section>
@@ -3332,12 +4025,14 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
         }
         return scenes.every(function(scene) {
           const sceneTasks = (tasks || []).filter(function(task) {
-            return task.scene_id === scene.scene_id;
+            if (!task.scene_id) return false;
+            return task.scene_id === scene.scene_id || task.scene_id.startsWith(scene.scene_id + "_kf");
           });
-          const imageTask = sceneTasks.find(function(task) { return task.kind === "scene_image_generation"; });
+          const imageTasks = sceneTasks.filter(function(task) { return task.kind === "scene_image_generation"; });
+          const allImagesDone = imageTasks.length > 0 && imageTasks.every(function(task) { return task.status === "success"; });
           const audioTask = sceneTasks.find(function(task) { return task.kind === "scene_audio_generation"; });
           const videoTask = sceneTasks.find(function(task) { return task.kind === "scene_video_compositing"; });
-          return isSceneTaskFinished(imageTask) &&
+          return allImagesDone &&
             isSceneTaskFinished(audioTask) &&
             isSceneTaskFinished(videoTask) &&
             (scene.compose_status === "success" || scene.compose_status === "preview_ready");
@@ -3394,7 +4089,8 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
 
         sceneList.innerHTML = scenes.map(function(scene) {
           const sceneTasks = (tasks || []).filter(function(task) {
-            return task.scene_id === scene.scene_id;
+            if (!task.scene_id) return false;
+            return task.scene_id === scene.scene_id || task.scene_id.startsWith(scene.scene_id + "_kf");
           });
           const taskHtml = sceneTasks.length > 0
             ? sceneTasks.map(function(task) {
@@ -3402,6 +4098,19 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
               }).join("")
             : "<div class=\"muted small\">暂无关联任务</div>";
           const canRunVideo = scene.image_status === "success" && scene.audio_status === "success";
+
+          const imageTasks = sceneTasks.filter(function(task) { return task.kind === "scene_image_generation"; });
+          const imageButtonsHtml = imageTasks.map(function(task) {
+            var label = "图片任务";
+            if (task.scene_id.indexOf("_kf") >= 0) {
+              var kfNum = task.scene_id.split("_kf")[1];
+              label = "关键帧 " + (parseInt(kfNum) + 1);
+            }
+            var btnLabel = label + " (" + escapeHtml(task.status || "pending") + ")";
+            var disabled = task.status === "running" ? " disabled" : "";
+            return "<button type=\"button\" data-scene-id=\"" + escapeHtml(task.scene_id) + "\" data-scene-action=\"image\"" + disabled + ">" + btnLabel + "</button>";
+          }).join("");
+
           return "" +
             "<div class=\"scene-card\">" +
               "<div class=\"scene-head\">" +
@@ -3414,7 +4123,7 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
               "<div class=\"muted small\" style=\"margin-top: 8px;\">image: " + escapeHtml(scene.image_status || "-") + " · audio: " + escapeHtml(scene.audio_status || "-") + " · video: " + escapeHtml(scene.compose_status || "-") + "</div>" +
               "<div class=\"task-chips\">" + taskHtml + "</div>" +
               "<div class=\"scene-actions\">" +
-                "<button type=\"button\" data-scene-id=\"" + escapeHtml(scene.scene_id) + "\" data-scene-action=\"image\">运行图片任务</button>" +
+                imageButtonsHtml +
                 "<button type=\"button\" data-scene-id=\"" + escapeHtml(scene.scene_id) + "\" data-scene-action=\"audio\">运行音频任务</button>" +
                 "<button type=\"button\" data-scene-id=\"" + escapeHtml(scene.scene_id) + "\" data-scene-action=\"video\"" + (canRunVideo ? "" : " disabled") + ">运行视频任务</button>" +
               "</div>" +
@@ -3466,7 +4175,9 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
             body: JSON.stringify({
               title: document.getElementById("title").value,
               story: document.getElementById("story").value,
-              provider_ref: document.getElementById("providerRef").value
+              provider_ref: document.getElementById("providerRef").value,
+              target_duration_sec: parseInt(document.getElementById("targetDuration").value),
+              image_switch_interval_sec: parseInt(document.getElementById("imageSwitchInterval").value)
             })
           });
           const projectId = data.project && data.project.project_id;

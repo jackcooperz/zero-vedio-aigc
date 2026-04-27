@@ -279,7 +279,9 @@ Orchestrator 校验 storyboard.json
 {
   "title": "小云朵的星星收集之旅",
   "story": "在很远很远的天空上，住着一朵软乎乎的小云朵，名字叫棉棉。一天晚上，它决定帮助迷路的小星星回家。",
-  "provider_ref": "doubao/web"
+  "provider_ref": "doubao/web",
+  "target_duration_sec": 60,
+  "image_switch_interval_sec": 3
 }
 ```
 
@@ -344,6 +346,8 @@ Orchestrator 校验 storyboard.json
 - 除创建项目外，其余项目级接口都通过路径参数传入 `projectId`
 - Scene 级接口通过路径参数传入 `sceneId`
 - `force=true` 表示即使已有成功产物，也允许重新生成
+- `target_duration_sec` 表示目标视频总时长（秒），可选参数
+- `image_switch_interval_sec` 表示图片切换间隔（秒），可选参数
 
 #### 4.2.3 推荐调用顺序
 
