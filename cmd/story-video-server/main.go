@@ -23,6 +23,7 @@ import (
 const (
 	defaultEdgeTTSVoiceName   = "zh-CN-XiaoxiaoNeural"
 	defaultEdgeTTSProviderRef = "edge-tts/" + defaultEdgeTTSVoiceName
+	baseCharsPerSec           = 3.5
 )
 
 type app struct {
@@ -846,19 +847,11 @@ func (a *app) generateBaseStoryboard(project projectFile, providerRef, browserPr
 }
 
 func (a *app) enhanceStoryboardWithKeyframes(storyboard map[string]any, project projectFile) (map[string]any, error) {
-	// 获取场景列表
 	scenes, ok := storyboard["scenes"].([]any)
 	if !ok {
 		return storyboard, nil
 	}
 
-	// 计算总字数预算
-	totalWordsBudget := a.calculateTotalWordsBudget(project)
-
-	// 计算每个场景的字数预算
-	sceneWordBudgets := a.calculateSceneWordBudgets(scenes, totalWordsBudget)
-
-	// 为每个场景补充关键帧
 	enhancedScenes := make([]any, 0, len(scenes))
 	for i, scene := range scenes {
 		sceneMap, ok := scene.(map[string]any)
@@ -867,13 +860,9 @@ func (a *app) enhanceStoryboardWithKeyframes(storyboard map[string]any, project 
 			continue
 		}
 
-		// 计算场景时长预算
-		sceneDurationBudget := a.calculateSceneDurationBudget(sceneMap, sceneWordBudgets[i])
+		sceneDuration := a.calculateSceneDuration(sceneMap)
+		imageCount := a.calculateImageCount(sceneDuration, project.ImageSwitchIntervalSec)
 
-		// 计算需要的关键帧数量
-		imageCount := a.calculateImageCount(sceneDurationBudget, project.ImageSwitchIntervalSec)
-
-		// 如果需要多个关键帧，生成关键帧
 		if imageCount > 1 {
 			enhancedScene, err := a.generateKeyframesForScene(sceneMap, imageCount, project)
 			if err != nil {
@@ -887,48 +876,20 @@ func (a *app) enhanceStoryboardWithKeyframes(storyboard map[string]any, project 
 		}
 	}
 
-	// 更新 storyboard 中的场景
 	storyboard["scenes"] = enhancedScenes
 	return storyboard, nil
 }
 
-func (a *app) calculateTotalWordsBudget(project projectFile) int {
-	// 根据目标时长和语速计算总字数预算
-	// 假设平均语速为 200 字/分钟
-	wordsPerMinute := 200
-	totalMinutes := float64(project.TargetDurationSec) / 60.0
-	totalWords := int(totalMinutes * float64(wordsPerMinute))
-	return totalWords
-}
-
-func (a *app) calculateSceneWordBudgets(scenes []any, totalWordsBudget int) []int {
-	// 简单分配：根据场景数量平均分配
-	sceneCount := len(scenes)
-	if sceneCount == 0 {
-		return []int{}
+func (a *app) calculateSceneDuration(scene map[string]any) float64 {
+	if durationHint, ok := requiredPositiveIntField(scene, "duration_hint_sec"); ok && durationHint > 0 {
+		return float64(durationHint)
 	}
-
-	baseBudget := totalWordsBudget / sceneCount
-	remainder := totalWordsBudget % sceneCount
-
-	budgets := make([]int, sceneCount)
-	for i := range budgets {
-		budgets[i] = baseBudget
-		if i < remainder {
-			budgets[i]++
-		}
+	narration, _ := requiredStringField(scene, "narration")
+	charCount := utf8.RuneCountInString(strings.TrimSpace(narration))
+	if charCount <= 0 {
+		return 3.0
 	}
-
-	return budgets
-}
-
-func (a *app) calculateSceneDurationBudget(scene map[string]any, wordBudget int) float64 {
-	// 根据字数预算计算场景时长预算
-	// 假设平均语速为 200 字/分钟
-	wordsPerMinute := 200
-	durationMinutes := float64(wordBudget) / float64(wordsPerMinute)
-	durationSeconds := durationMinutes * 60.0
-	return durationSeconds
+	return float64(charCount) / baseCharsPerSec
 }
 
 func (a *app) calculateImageCount(sceneDuration float64, switchInterval int) int {
@@ -3221,6 +3182,17 @@ func buildBaseStoryboardPrompt(project projectFile) string {
 	if project.ImageSwitchIntervalSec > 0 {
 		imageSwitchInfo = fmt.Sprintf("- 图片切换间隔：%d 秒\n", project.ImageSwitchIntervalSec)
 	}
+
+	// 根据目标时长和 TTS 语速计算 narration 总字数要求
+	var narrationLengthInfo string
+	if project.TargetDurationSec > 0 {
+		totalChars := int(float64(project.TargetDurationSec) * baseCharsPerSec)
+		narrationLengthInfo = fmt.Sprintf(`- TTS 语速基准：%.1f 字/秒（中文旁白正常语速）。
+- 旁白总字数要求：所有 scene 的 narration 字段的中文字符数之和必须接近 %d 字（允许 ±10%% 误差）。这是硬性要求，请严格控制每个 scene 的 narration 长度，确保总和符合要求。
+- duration_hint_sec 计算规则：每个 scene 的 duration_hint_sec 必须根据该 scene 的 narration 字数 ÷ %.1f 字/秒 来计算，不要平均分配时长。narration 越长的场景 duration_hint_sec 越大，narration 越短的场景 duration_hint_sec 越小。所有 scene 的 duration_hint_sec 之和应接近 %d 秒。
+`, baseCharsPerSec, totalChars, baseCharsPerSec, project.TargetDurationSec)
+	}
+
 	return strings.TrimSpace(fmt.Sprintf(`
 请将下面的儿童故事转换为严格 JSON 的 storyboard.json。
 
@@ -3279,14 +3251,14 @@ scene 的最小合法结构示例：
 - 不要遗漏 prompt.subject_prompt 或 prompt.scene_prompt。
 - character_bible、audio_profile、video_profile、render_rules 也要保持 object/array 结构，不要输出自然语言段落。
 - 根据目标视频总时长控制故事的长度和场景数量，确保 narration 的总字数适合目标时长。
-
+%s
 项目信息：
 - project_id: %s
 - title: %s
 %s%s
 原始故事：
 %s
-`, project.ProjectID, project.Title, durationInfo, imageSwitchInfo, project.Story))
+`, narrationLengthInfo, project.ProjectID, project.Title, durationInfo, imageSwitchInfo, project.Story))
 }
 
 func buildKeyframesPrompt(scene map[string]any, imageCount int) string {
