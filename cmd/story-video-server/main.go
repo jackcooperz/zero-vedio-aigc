@@ -871,7 +871,7 @@ func (a *app) enhanceStoryboardWithKeyframes(storyboard map[string]any, project 
 		imageCount := a.calculateImageCount(sceneDuration, project.ImageSwitchIntervalSec)
 
 		if imageCount > 1 {
-			enhancedScene, err := a.generateKeyframesForScene(sceneMap, imageCount, project)
+			enhancedScene, err := a.generateKeyframesForScene(sceneMap, imageCount, project, storyboard)
 			if err != nil {
 				log.Printf("generate keyframes for scene %d failed: %v", i, err)
 				enhancedScenes = append(enhancedScenes, scene)
@@ -916,13 +916,17 @@ func (a *app) calculateImageCount(sceneDuration float64, switchInterval int) int
 	return imageCount
 }
 
-func (a *app) generateKeyframesForScene(scene map[string]any, imageCount int, project projectFile) (map[string]any, error) {
+func (a *app) generateKeyframesForScene(scene map[string]any, imageCount int, project projectFile, storyboard map[string]any) (map[string]any, error) {
 	aspectRatio := project.AspectRatio
 	if aspectRatio == "" {
 		aspectRatio = "16:9"
 	}
+	// 从 storyboard 中提取角色圣经、全局风格和渲染规则
+	characterBible, _ := storyboard["character_bible"].(map[string]any)
+	globalStyle, _ := storyboard["global_style"].(map[string]any)
+	renderRules, _ := storyboard["render_rules"].(map[string]any)
 	// 构建关键帧生成提示词
-	keyframesPrompt := buildKeyframesPrompt(scene, imageCount, aspectRatio)
+	keyframesPrompt := buildKeyframesPrompt(scene, imageCount, aspectRatio, characterBible, globalStyle, renderRules)
 
 	// 调用 zero-token 生成关键帧
 	providerRef := "doubao/web" // 使用默认 provider
@@ -1831,9 +1835,28 @@ func (a *app) persistGeneratedImage(projectID string, sceneID string, image zero
 		}
 		raw = blob
 	case image.URL != "":
-		resp, fetchErr := http.Get(image.URL)
+		req, reqErr := http.NewRequest("GET", image.URL, nil)
+		if reqErr != nil {
+			return "", "", "", fmt.Errorf("create download request: %w", reqErr)
+		}
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+		req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
+		req.Header.Set("Referer", image.URL)
+
+		var resp *http.Response
+		var fetchErr error
+		for attempt := 1; attempt <= 3; attempt++ {
+			resp, fetchErr = http.DefaultClient.Do(req)
+			if fetchErr == nil {
+				break
+			}
+			log.Printf("download image attempt %d/3 failed: %v, url=%s", attempt, fetchErr, image.URL)
+			if attempt < 3 {
+				time.Sleep(time.Duration(attempt) * time.Second)
+			}
+		}
 		if fetchErr != nil {
-			return "", "", "", fetchErr
+			return "", "", "", fmt.Errorf("download generated image after 3 attempts: %w", fetchErr)
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -3285,7 +3308,7 @@ scene 的最小合法结构示例：
 `, aspectRatio, aspectRatio, narrationLengthInfo, project.ProjectID, project.Title, durationInfo, imageSwitchInfo, aspectRatioInfo, project.Story))
 }
 
-func buildKeyframesPrompt(scene map[string]any, imageCount int, aspectRatio string) string {
+func buildKeyframesPrompt(scene map[string]any, imageCount int, aspectRatio string, characterBible map[string]any, globalStyle map[string]any, renderRules map[string]any) string {
 	title := ""
 	narration := ""
 	storyFunction := ""
@@ -3356,6 +3379,15 @@ func buildKeyframesPrompt(scene map[string]any, imageCount int, aspectRatio stri
 		visual = fmt.Sprintf("%s, %s, %s, %s", shotType, cameraMotion, composition, action)
 	}
 
+	// 构建角色圣经描述
+	characterBibleStr := compactJSONObject(characterBible)
+
+	// 构建全局风格描述
+	globalStyleStr := compactJSONObject(globalStyle)
+
+	// 构建渲染规则描述
+	renderRulesStr := compactJSONObject(renderRules)
+
 	return strings.TrimSpace(fmt.Sprintf(`
 为以下场景生成 %d 个关键帧，每个关键帧都应该有独立的视觉描述和提示词。
 
@@ -3364,11 +3396,20 @@ func buildKeyframesPrompt(scene map[string]any, imageCount int, aspectRatio stri
 - 所有关键帧的视觉描述和提示词必须符合此画面比例的构图要求。
 - 构图、镜头角度、主体位置都必须适配 %s 的画面比例。
 
+全局风格：
+%s
+
+渲染规则：
+%s
+
+角色圣经：
+%s
+
 场景信息：
 - 场景标题：%s
 - 故事功能：%s
 - 旁白：%s
-- 角色：%s
+- 场景涉及角色ID：%s
 - 物体：%s
 - 环境：%s
 - 视觉描述：%s
@@ -3376,6 +3417,7 @@ func buildKeyframesPrompt(scene map[string]any, imageCount int, aspectRatio stri
 请返回严格的 JSON 格式，只包含 keyframes 数组，每个 keyframe 必须包含：
 - frame_id：唯一标识符，格式为 "scene_id_f01"
 - sequence：序列编号，从 1 开始
+- characters：数组，列出该关键帧涉及的角色ID（如 ["c01", "c02"]）
 - prompt：对象，包含 subject_prompt、scene_prompt、full_prompt
 - visual：对象，包含 shot_type、camera_motion、composition、action
 
@@ -3385,6 +3427,7 @@ func buildKeyframesPrompt(scene map[string]any, imageCount int, aspectRatio stri
     {
       "frame_id": "s01_f01",
       "sequence": 1,
+      "characters": ["c01"],
       "prompt": {
         "subject_prompt": "主角与关键物体的画面描述",
         "scene_prompt": "场景环境、镜头和氛围描述",
@@ -3405,8 +3448,11 @@ func buildKeyframesPrompt(scene map[string]any, imageCount int, aspectRatio stri
 2. 关键帧之间的动作有连贯性
 3. 所有关键帧都符合场景的整体氛围
 4. 所有关键帧的构图必须符合画面比例 %s
-5. 只返回 JSON，不要返回其他内容
-`, imageCount, aspectRatio, aspectRatio, title, storyFunction, narration, strings.Join(characters, ", "), strings.Join(objects, ", "), environment, visual, aspectRatio))
+5. 每个关键帧必须包含 characters 字段，标明该帧涉及的角色ID
+6. 提示词中必须符合角色的具体外貌、性格和动作习惯描述
+7. 提示词必须符合全局风格和渲染规则
+8. 只返回 JSON，不要返回其他内容
+`, imageCount, aspectRatio, aspectRatio, globalStyleStr, renderRulesStr, characterBibleStr, title, storyFunction, narration, strings.Join(characters, ", "), strings.Join(objects, ", "), environment, visual, aspectRatio))
 }
 
 func buildKeyframeImagePrompt(storyboardRoot map[string]any, scene sceneFile, keyframe keyframe) string {
@@ -3431,6 +3477,15 @@ func buildKeyframeImagePrompt(storyboardRoot map[string]any, scene sceneFile, ke
 
 	aspectRatio := resolveSceneAspectRatio(storyboardRoot)
 
+	// 从 storyboard 根提取角色圣经、全局风格和渲染规则
+	characterBible, _ := storyboardRoot["character_bible"].(map[string]any)
+	globalStyle, _ := storyboardRoot["global_style"].(map[string]any)
+	renderRules, _ := storyboardRoot["render_rules"].(map[string]any)
+
+	characterBibleStr := compactJSONObject(characterBible)
+	globalStyleStr := compactJSONObject(globalStyle)
+	renderRulesStr := compactJSONObject(renderRules)
+
 	return strings.TrimSpace(fmt.Sprintf(`
 为儿童故事视频生成场景关键帧图片。
 
@@ -3439,13 +3494,23 @@ func buildKeyframeImagePrompt(storyboardRoot map[string]any, scene sceneFile, ke
 - 生成的图片必须符合此画面比例的构图要求。
 - 构图、镜头角度、主体位置都必须适配 %s 的画面比例。
 
+全局风格：
+%s
+
+渲染规则：
+%s
+
+角色圣经（必须严格按照此描述绘制角色外貌和动作）：
+%s
+
 场景信息：
 - 场景标题：%s
 - 故事功能：%s
 - 旁白：%s
-- 角色：%s
+- 场景涉及角色：%s
 - 物体：%s
 - 环境：%s
+- 光影效果：%s
 
 关键帧信息：
 - 关键帧序号：%d
@@ -3457,11 +3522,15 @@ func buildKeyframeImagePrompt(storyboardRoot map[string]any, scene sceneFile, ke
 3. 符合场景的环境和氛围
 4. 展现关键帧的具体动作或细节
 5. 图片构图必须符合画面比例 %s 的要求
+6. 角色外貌必须严格按照角色圣经中的描述绘制，不能自行发挥
+7. 画面必须符合全局风格和渲染规则
+8. 画面中只能出现"场景涉及角色"中列出的角色，绝对不能出现任何未提及的角色
+9. 严禁出现无关的人脸、无关的人物、无关的角色，只绘制场景涉及的角色
 
 提示词：
 - 主体提示：%s
 - 场景提示：%s
-`, aspectRatio, aspectRatio, scene.Title, scene.StoryFunction, scene.Narration, strings.Join(scene.Characters, ", "), strings.Join(scene.Objects, ", "), fmt.Sprintf("%s, %s, %s, %s", scene.Environment["location"], scene.Environment["time_of_day"], scene.Environment["weather"], scene.Environment["atmosphere"]), keyframe.Sequence, fmt.Sprintf("%s, %s, %s, %s", keyframe.Visual["shot_type"], keyframe.Visual["camera_motion"], keyframe.Visual["composition"], keyframe.Visual["action"]), aspectRatio, subjectPrompt, scenePrompt))
+`, aspectRatio, aspectRatio, globalStyleStr, renderRulesStr, characterBibleStr, scene.Title, scene.StoryFunction, scene.Narration, strings.Join(scene.Characters, ", "), strings.Join(scene.Objects, ", "), fmt.Sprintf("%s, %s, %s, %s", scene.Environment["location"], scene.Environment["time_of_day"], scene.Environment["weather"], scene.Environment["atmosphere"]), fmt.Sprintf("光照-%s, 动态-%s, 后处理-%s", scene.Effects["lighting"], scene.Effects["motion"], scene.Effects["post_process"]), keyframe.Sequence, fmt.Sprintf("%s, %s, %s, %s", keyframe.Visual["shot_type"], keyframe.Visual["camera_motion"], keyframe.Visual["composition"], keyframe.Visual["action"]), aspectRatio, subjectPrompt, scenePrompt))
 }
 
 func buildStoryboardPrompt(project projectFile) string {
@@ -3630,11 +3699,14 @@ func readJSONFile(path string, target any) error {
 }
 
 func writeJSONFile(path string, value any) error {
-	raw, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(value); err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(raw, '\n'), 0o644)
+	return os.WriteFile(path, buf.Bytes(), 0o644)
 }
 
 func writeRawJSONFile(path string, raw []byte) error {
