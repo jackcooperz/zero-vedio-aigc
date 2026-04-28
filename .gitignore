@@ -8,8 +8,13 @@ dist/
 npm
 tsc
 zero-video-factory@*
-story-video-server
 *.mp4
 *.wav
 *.srt
 projects/
+# 假设 .gitignore 位于 story-video-server 同级或上级目录
+cmd/story-video-server/story-video-server
+# 2. 忽略 story-video-server 目录下所有以 __debug_bin 开头的文件
+cmd/story-video-server/__debug_bin*
+# 3. (可选) 忽略 dist 目录（通常用于存放编译产物）
+cmd/story-video-server/dist/
