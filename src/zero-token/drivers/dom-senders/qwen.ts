@@ -8,6 +8,68 @@ function isElementDisabled(value: unknown): boolean {
   return value === true || value === "true";
 }
 
+function normalizePromptText(value: string): string {
+  return value.replace(/\r\n/g, "\n");
+}
+
+async function readQwenInputValue(input: any): Promise<string> {
+  return input.evaluate((element: HTMLTextAreaElement | HTMLElement) => {
+    if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
+      return element.value ?? "";
+    }
+    return element.textContent ?? "";
+  }).catch(() => "");
+}
+
+async function verifyQwenPrompt(input: any, prompt: string): Promise<boolean> {
+  const actual = normalizePromptText(await readQwenInputValue(input));
+  return actual === normalizePromptText(prompt);
+}
+
+async function writeQwenPrompt(input: any, page: any, prompt: string): Promise<void> {
+  const normalizedPrompt = normalizePromptText(prompt);
+
+  await input.fill("").catch(() => {});
+  await input.fill(normalizedPrompt).catch(() => {});
+  if (await verifyQwenPrompt(input, normalizedPrompt)) {
+    return;
+  }
+
+  await input.click({ timeout: 5000 });
+  await page.keyboard.press("Control+A").catch(() => {});
+  await page.keyboard.insertText(normalizedPrompt).catch(() => {});
+  if (await verifyQwenPrompt(input, normalizedPrompt)) {
+    return;
+  }
+
+  const wroteViaDom = await input.evaluate((element: HTMLTextAreaElement | HTMLElement, value: string) => {
+    if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
+      element.focus();
+      element.value = value;
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+      return true;
+    }
+    if (element instanceof HTMLElement && element.isContentEditable) {
+      element.focus();
+      element.textContent = value;
+      element.dispatchEvent(new InputEvent("input", { bubbles: true, data: value, inputType: "insertText" }));
+      return true;
+    }
+    return false;
+  }, normalizedPrompt).catch(() => false);
+
+  if (!wroteViaDom || !(await verifyQwenPrompt(input, normalizedPrompt))) {
+    throw new ZeroTokenError("DOM_SEND_FAILED", "Failed to write full prompt into Qwen input box", {
+      retryable: true,
+      details: {
+        expectedLength: normalizedPrompt.length,
+        actualLength: (await readQwenInputValue(input)).length,
+      },
+    });
+  }
+}
+
 function getQwenComposer(input: any) {
   return input.locator("xpath=ancestor::div[contains(@class,'message-input-wrapper')][1]");
 }
@@ -186,7 +248,8 @@ export async function sendQwenDomPrompt(context: DomSendPromptContext): Promise<
   await input.click({ timeout: 5000 });
   await pasteInputImages(session.page, request);
   await waitForQwenAttachmentsReady(session, request.input.images?.length ?? 0);
-  await session.page.keyboard.type(getPromptFromInput(request.input), { delay: 15 });
+  const prompt = getPromptFromInput(request.input);
+  await writeQwenPrompt(input, session.page, prompt);
 
   const sendButton = session.page.locator("button.send-button").last();
   for (let attempt = 0; attempt < 10; attempt += 1) {
