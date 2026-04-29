@@ -76,6 +76,10 @@ type composeFinalVideoRequest struct {
 	Force                bool `json:"force"`
 }
 
+type selectImageCandidateRequest struct {
+	CandidateIndex int `json:"candidate_index"`
+}
+
 type projectFile struct {
 	ProjectID                string `json:"project_id"`
 	Title                    string `json:"title"`
@@ -153,69 +157,83 @@ type storyboardValidationResult struct {
 	ValidatedAt string   `json:"validated_at,omitempty"`
 }
 
+type imageCandidate struct {
+	CandidateID     string `json:"candidate_id,omitempty"`
+	SourceIndex     int    `json:"source_index,omitempty"`
+	ImageURL        string `json:"image_url,omitempty"`
+	ImageLocalPath  string `json:"image_local_path,omitempty"`
+	ImagePreviewURL string `json:"image_preview_url,omitempty"`
+	ImageMimeType   string `json:"image_mime_type,omitempty"`
+}
+
 type keyframe struct {
-	FrameID          string         `json:"frame_id"`
-	Sequence         int            `json:"sequence"`
-	Prompt           map[string]any `json:"prompt"`
-	Visual           map[string]any `json:"visual"`
-	ImageLocalPath   string         `json:"image_local_path,omitempty"`
-	ImageURL         string         `json:"image_url,omitempty"`
-	ImagePreviewURL  string         `json:"image_preview_url,omitempty"`
-	ImageMimeType    string         `json:"image_mime_type,omitempty"`
-	ImageError       string         `json:"image_error,omitempty"`
-	ImageGeneratedAt string         `json:"image_generated_at,omitempty"`
+	FrameID          string           `json:"frame_id"`
+	Sequence         int              `json:"sequence"`
+	Characters       []string         `json:"characters,omitempty"`
+	Prompt           map[string]any   `json:"prompt"`
+	Visual           map[string]any   `json:"visual"`
+	ImageCandidates  []imageCandidate `json:"image_candidates,omitempty"`
+	SelectedImageIdx int              `json:"selected_image_index,omitempty"`
+	ImageLocalPath   string           `json:"image_local_path,omitempty"`
+	ImageURL         string           `json:"image_url,omitempty"`
+	ImagePreviewURL  string           `json:"image_preview_url,omitempty"`
+	ImageMimeType    string           `json:"image_mime_type,omitempty"`
+	ImageError       string           `json:"image_error,omitempty"`
+	ImageGeneratedAt string           `json:"image_generated_at,omitempty"`
 }
 
 type sceneFile struct {
-	ProjectID            string         `json:"project_id"`
-	SceneID              string         `json:"scene_id"`
-	Sequence             int            `json:"sequence"`
-	Title                string         `json:"title"`
-	StoryFunction        string         `json:"story_function"`
-	Narration            string         `json:"narration"`
-	Subtitle             string         `json:"subtitle"`
-	DurationHintSec      int            `json:"duration_hint_sec"`
-	Characters           []string       `json:"characters"`
-	Objects              []string       `json:"objects"`
-	Environment          map[string]any `json:"environment"`
-	Visual               map[string]any `json:"visual"`
-	Prompt               map[string]any `json:"prompt"`
-	Audio                map[string]any `json:"audio"`
-	Effects              map[string]any `json:"effects"`
-	Status               string         `json:"status"`
-	ImageStatus          string         `json:"image_status"`
-	ImageProviderRef     string         `json:"image_provider_ref,omitempty"`
-	ImagePrompt          string         `json:"image_prompt,omitempty"`
-	ImageURL             string         `json:"image_url,omitempty"`
-	ImageLocalPath       string         `json:"image_local_path,omitempty"`
-	ImagePreviewURL      string         `json:"image_preview_url,omitempty"`
-	ImageMimeType        string         `json:"image_mime_type,omitempty"`
-	ImageError           string         `json:"image_error,omitempty"`
-	ImageGeneratedAt     string         `json:"image_generated_at,omitempty"`
-	Keyframes            []keyframe     `json:"keyframes,omitempty"`
-	AudioStatus          string         `json:"audio_status"`
-	AudioProviderRef     string         `json:"audio_provider_ref,omitempty"`
-	VoiceName            string         `json:"voice_name,omitempty"`
-	SpeakingRate         string         `json:"speaking_rate,omitempty"`
-	Pitch                string         `json:"pitch,omitempty"`
-	AudioLocalPath       string         `json:"audio_local_path,omitempty"`
-	AudioPreviewURL      string         `json:"audio_preview_url,omitempty"`
-	AudioMimeType        string         `json:"audio_mime_type,omitempty"`
-	AudioDurationMs      int            `json:"audio_duration_ms,omitempty"`
-	AudioError           string         `json:"audio_error,omitempty"`
-	AudioGeneratedAt     string         `json:"audio_generated_at,omitempty"`
-	SubtitleLocalPath    string         `json:"subtitle_local_path,omitempty"`
-	SubtitlePreviewURL   string         `json:"subtitle_preview_url,omitempty"`
-	ComposeStatus        string         `json:"compose_status"`
-	ComposeMode          string         `json:"compose_mode,omitempty"`
-	SceneVideoLocalPath  string         `json:"scene_video_local_path,omitempty"`
-	SceneVideoPreviewURL string         `json:"scene_video_preview_url,omitempty"`
-	SceneVideoMimeType   string         `json:"scene_video_mime_type,omitempty"`
-	SceneDurationMs      int            `json:"scene_duration_ms,omitempty"`
-	ComposeError         string         `json:"compose_error,omitempty"`
-	ComposedAt           string         `json:"composed_at,omitempty"`
-	CreatedAt            string         `json:"created_at"`
-	UpdatedAt            string         `json:"updated_at"`
+	ProjectID            string           `json:"project_id"`
+	SceneID              string           `json:"scene_id"`
+	Sequence             int              `json:"sequence"`
+	Title                string           `json:"title"`
+	StoryFunction        string           `json:"story_function"`
+	Narration            string           `json:"narration"`
+	Subtitle             string           `json:"subtitle"`
+	DurationHintSec      int              `json:"duration_hint_sec"`
+	Characters           []string         `json:"characters"`
+	Objects              []string         `json:"objects"`
+	Environment          map[string]any   `json:"environment"`
+	Visual               map[string]any   `json:"visual"`
+	Prompt               map[string]any   `json:"prompt"`
+	Audio                map[string]any   `json:"audio"`
+	Effects              map[string]any   `json:"effects"`
+	Status               string           `json:"status"`
+	ImageStatus          string           `json:"image_status"`
+	ImageProviderRef     string           `json:"image_provider_ref,omitempty"`
+	ImagePrompt          string           `json:"image_prompt,omitempty"`
+	ImageCandidates      []imageCandidate `json:"image_candidates,omitempty"`
+	SelectedImageIdx     int              `json:"selected_image_index,omitempty"`
+	ImageURL             string           `json:"image_url,omitempty"`
+	ImageLocalPath       string           `json:"image_local_path,omitempty"`
+	ImagePreviewURL      string           `json:"image_preview_url,omitempty"`
+	ImageMimeType        string           `json:"image_mime_type,omitempty"`
+	ImageError           string           `json:"image_error,omitempty"`
+	ImageGeneratedAt     string           `json:"image_generated_at,omitempty"`
+	Keyframes            []keyframe       `json:"keyframes,omitempty"`
+	AudioStatus          string           `json:"audio_status"`
+	AudioProviderRef     string           `json:"audio_provider_ref,omitempty"`
+	VoiceName            string           `json:"voice_name,omitempty"`
+	SpeakingRate         string           `json:"speaking_rate,omitempty"`
+	Pitch                string           `json:"pitch,omitempty"`
+	AudioLocalPath       string           `json:"audio_local_path,omitempty"`
+	AudioPreviewURL      string           `json:"audio_preview_url,omitempty"`
+	AudioMimeType        string           `json:"audio_mime_type,omitempty"`
+	AudioDurationMs      int              `json:"audio_duration_ms,omitempty"`
+	AudioError           string           `json:"audio_error,omitempty"`
+	AudioGeneratedAt     string           `json:"audio_generated_at,omitempty"`
+	SubtitleLocalPath    string           `json:"subtitle_local_path,omitempty"`
+	SubtitlePreviewURL   string           `json:"subtitle_preview_url,omitempty"`
+	ComposeStatus        string           `json:"compose_status"`
+	ComposeMode          string           `json:"compose_mode,omitempty"`
+	SceneVideoLocalPath  string           `json:"scene_video_local_path,omitempty"`
+	SceneVideoPreviewURL string           `json:"scene_video_preview_url,omitempty"`
+	SceneVideoMimeType   string           `json:"scene_video_mime_type,omitempty"`
+	SceneDurationMs      int              `json:"scene_duration_ms,omitempty"`
+	ComposeError         string           `json:"compose_error,omitempty"`
+	ComposedAt           string           `json:"composed_at,omitempty"`
+	CreatedAt            string           `json:"created_at"`
+	UpdatedAt            string           `json:"updated_at"`
 }
 
 type storyboardValidationError struct {
@@ -496,6 +514,29 @@ func (a *app) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		scene, err := a.composeSceneVideo(projectID, parts[2], req)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, os.ErrNotExist) {
+				status = http.StatusNotFound
+			}
+			writeError(w, status, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, scene)
+		return
+	}
+
+	if len(parts) == 5 && parts[1] == "scenes" && parts[3] == "image" && parts[4] == "select" {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var req selectImageCandidateRequest
+		if err := decodeJSONBody(r.Body, &req); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		scene, err := a.selectSceneImageCandidate(projectID, parts[2], req.CandidateIndex)
 		if err != nil {
 			status := http.StatusInternalServerError
 			if errors.Is(err, os.ErrNotExist) {
@@ -922,7 +963,7 @@ func (a *app) generateKeyframesForScene(scene map[string]any, imageCount int, pr
 		aspectRatio = "16:9"
 	}
 	// 从 storyboard 中提取角色圣经、全局风格和渲染规则
-	characterBible, _ := storyboard["character_bible"].(map[string]any)
+	characterBible := storyboard["character_bible"]
 	globalStyle, _ := storyboard["global_style"].(map[string]any)
 	renderRules, _ := storyboard["render_rules"].(map[string]any)
 	// 构建关键帧生成提示词
@@ -1260,7 +1301,7 @@ func (a *app) generateSceneImage(projectID string, sceneID string, req generateS
 		prompt = buildSceneImagePrompt(storyboardRoot, scene)
 	}
 
-	image, err := a.runZeroTokenSceneImage(project, scene, req, prompt, resolveSceneAspectRatio(storyboardRoot))
+	images, err := a.runZeroTokenSceneImage(project, sceneID, req, prompt, resolveSceneAspectRatio(storyboardRoot))
 	if err != nil {
 		failedAt := time.Now().UTC().Format(time.RFC3339)
 		if keyframeIndex >= 0 && keyframeIndex < len(scene.Keyframes) {
@@ -1280,7 +1321,7 @@ func (a *app) generateSceneImage(projectID string, sceneID string, req generateS
 		return sceneFile{}, err
 	}
 
-	localPath, previewURL, mimeType, err := a.persistGeneratedImage(projectID, sceneID, image)
+	candidates, err := a.persistGeneratedImages(projectID, sceneID, images)
 	if err != nil {
 		failedAt := time.Now().UTC().Format(time.RFC3339)
 		if keyframeIndex >= 0 && keyframeIndex < len(scene.Keyframes) {
@@ -1303,12 +1344,13 @@ func (a *app) generateSceneImage(projectID string, sceneID string, req generateS
 	finishedAt := time.Now().UTC().Format(time.RFC3339)
 	if keyframeIndex >= 0 && keyframeIndex < len(scene.Keyframes) {
 		// 关键帧任务成功
-		scene.Keyframes[keyframeIndex].ImageLocalPath = localPath
-		scene.Keyframes[keyframeIndex].ImageURL = image.URL
-		scene.Keyframes[keyframeIndex].ImagePreviewURL = previewURL
-		scene.Keyframes[keyframeIndex].ImageMimeType = mimeType
+		if err := applySelectedKeyframeCandidate(&scene.Keyframes[keyframeIndex], candidates, 0); err != nil {
+			return sceneFile{}, err
+		}
 		scene.Keyframes[keyframeIndex].ImageGeneratedAt = finishedAt
 		scene.Keyframes[keyframeIndex].ImageError = ""
+		scene.ImageGeneratedAt = finishedAt
+		scene.ImageError = ""
 		scene.Status = "image_ready"
 		scene.UpdatedAt = finishedAt
 		// 检查是否所有关键帧都已完成
@@ -1324,14 +1366,13 @@ func (a *app) generateSceneImage(projectID string, sceneID string, req generateS
 		}
 	} else {
 		// 普通场景任务成功
+		if err := applySelectedImageCandidate(&scene, candidates, 0); err != nil {
+			return sceneFile{}, err
+		}
 		scene.Status = "image_ready"
 		scene.ImageStatus = "success"
 		scene.ImageProviderRef = resolveImageProviderRef(project.ProviderRef, req.ProviderRef)
 		scene.ImagePrompt = prompt
-		scene.ImageURL = image.URL
-		scene.ImageLocalPath = localPath
-		scene.ImagePreviewURL = previewURL
-		scene.ImageMimeType = mimeType
 		scene.ImageGeneratedAt = finishedAt
 		scene.ImageError = ""
 	}
@@ -1542,7 +1583,7 @@ func (a *app) composeSceneVideo(projectID string, sceneID string, req composeSce
 	ffmpegPath, ffmpegErr := exec.LookPath("ffmpeg")
 	if ffmpegErr == nil {
 		localPath = filepath.Join(targetDir, sceneID+".mp4")
-		if err := runFFmpegSceneCompose(ffmpegPath, scene, localPath, width, height, resolveSceneFPS(storyboardRoot), buildSubtitleForceStyle(storyboardRoot)); err != nil {
+		if err := runFFmpegSceneCompose(ffmpegPath, scene, localPath, width, height, resolveSceneFPS(storyboardRoot)); err != nil {
 			failedAt := time.Now().UTC().Format(time.RFC3339)
 			scene.Status = deriveSceneStatus(scene.ImageStatus, scene.AudioStatus, "failed")
 			scene.ComposeStatus = "failed"
@@ -1756,9 +1797,9 @@ func (a *app) readStoryboardRoot(project projectFile) (map[string]any, error) {
 	return storyboard, nil
 }
 
-func (a *app) runZeroTokenSceneImage(project projectFile, scene sceneFile, req generateSceneImageRequest, prompt string, aspectRatio string) (zeroTokenGeneratedImage, error) {
+func (a *app) runZeroTokenSceneImage(project projectFile, taskSceneID string, req generateSceneImageRequest, prompt string, aspectRatio string) ([]zeroTokenGeneratedImage, error) {
 	if !fileExists(a.zeroTokenCLIPath) {
-		return zeroTokenGeneratedImage{}, fmt.Errorf("zero-token bridge CLI not found at %s; run npm run build first", a.zeroTokenCLIPath)
+		return nil, fmt.Errorf("zero-token bridge CLI not found at %s; run npm run build first", a.zeroTokenCLIPath)
 	}
 
 	timeoutMs := req.TimeoutMs
@@ -1772,9 +1813,9 @@ func (a *app) runZeroTokenSceneImage(project projectFile, scene sceneFile, req g
 	providerRef := resolveImageProviderRef(project.ProviderRef, req.ProviderRef)
 
 	payload := map[string]any{
-		"requestId":   fmt.Sprintf("image_%s_%d", scene.SceneID, time.Now().UnixMilli()),
+		"requestId":   fmt.Sprintf("image_%s_%d", taskSceneID, time.Now().UnixMilli()),
 		"projectId":   project.ProjectID,
-		"sceneId":     scene.SceneID,
+		"sceneId":     taskSceneID,
 		"providerRef": providerRef,
 		"capability":  "text_image",
 		"input": map[string]any{
@@ -1792,7 +1833,7 @@ func (a *app) runZeroTokenSceneImage(project projectFile, scene sceneFile, req g
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return zeroTokenGeneratedImage{}, err
+		return nil, err
 	}
 
 	cmd := exec.Command("node", a.zeroTokenCLIPath, "generate")
@@ -1803,41 +1844,35 @@ func (a *app) runZeroTokenSceneImage(project projectFile, scene sceneFile, req g
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return zeroTokenGeneratedImage{}, fmt.Errorf("zero-token image bridge failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+		return nil, fmt.Errorf("zero-token image bridge failed: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 
 	var resp bridgeResponse
 	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
-		return zeroTokenGeneratedImage{}, fmt.Errorf("decode zero-token image response: %w", err)
+		return nil, fmt.Errorf("decode zero-token image response: %w", err)
 	}
 	if !resp.OK {
-		return zeroTokenGeneratedImage{}, fmt.Errorf("zero-token bridge error: %s %s", resp.Name, resp.Error)
+		return nil, fmt.Errorf("zero-token bridge error: %s %s", resp.Name, resp.Error)
 	}
 	if len(resp.Result.Output.Images) == 0 {
-		return zeroTokenGeneratedImage{}, errors.New("zero-token did not return any image")
+		return nil, errors.New("zero-token did not return any image")
 	}
-	return resp.Result.Output.Images[0], nil
+	return resp.Result.Output.Images, nil
 }
 
-func (a *app) persistGeneratedImage(projectID string, sceneID string, image zeroTokenGeneratedImage) (string, string, string, error) {
-	ext := detectImageExtension(image.URL, image.LocalPath, image.MimeType)
-	targetPath := filepath.Join(a.projectsDir, projectID, "assets", "images", sceneID+ext)
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
-		return "", "", "", err
-	}
-
+func (a *app) loadGeneratedImageBytes(image zeroTokenGeneratedImage) ([]byte, error) {
 	var raw []byte
 	switch {
 	case image.LocalPath != "" && fileExists(image.LocalPath):
 		blob, readErr := os.ReadFile(image.LocalPath)
 		if readErr != nil {
-			return "", "", "", readErr
+			return nil, readErr
 		}
 		raw = blob
 	case image.URL != "":
 		req, reqErr := http.NewRequest("GET", image.URL, nil)
 		if reqErr != nil {
-			return "", "", "", fmt.Errorf("create download request: %w", reqErr)
+			return nil, fmt.Errorf("create download request: %w", reqErr)
 		}
 		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 		req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
@@ -1856,25 +1891,105 @@ func (a *app) persistGeneratedImage(projectID string, sceneID string, image zero
 			}
 		}
 		if fetchErr != nil {
-			return "", "", "", fmt.Errorf("download generated image after 3 attempts: %w", fetchErr)
+			return nil, fmt.Errorf("download generated image after 3 attempts: %w", fetchErr)
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return "", "", "", fmt.Errorf("download generated image: unexpected HTTP %d", resp.StatusCode)
+			return nil, fmt.Errorf("download generated image: unexpected HTTP %d", resp.StatusCode)
 		}
 		blob, readErr := io.ReadAll(resp.Body)
 		if readErr != nil {
-			return "", "", "", readErr
+			return nil, readErr
 		}
 		raw = blob
 	default:
-		return "", "", "", errors.New("generated image has neither url nor localPath")
+		return nil, errors.New("generated image has neither url nor localPath")
 	}
+	return raw, nil
+}
 
-	if err := os.WriteFile(targetPath, raw, 0o644); err != nil {
-		return "", "", "", err
+func (a *app) removeGeneratedImageArtifacts(projectID string, sceneID string) {
+	patterns := []string{
+		filepath.Join(a.projectsDir, projectID, "assets", "images", sceneID+".*"),
+		filepath.Join(a.projectsDir, projectID, "assets", "images", sceneID+"__*"),
 	}
-	return targetPath, a.projectStaticURL(projectID, filepath.Join("assets", "images", sceneID+ext)), image.MimeType, nil
+	for _, pattern := range patterns {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			continue
+		}
+		for _, match := range matches {
+			_ = os.Remove(match)
+		}
+	}
+}
+
+func (a *app) persistGeneratedImages(projectID string, sceneID string, images []zeroTokenGeneratedImage) ([]imageCandidate, error) {
+	if len(images) == 0 {
+		return nil, errors.New("no generated images to persist")
+	}
+	targetDir := filepath.Join(a.projectsDir, projectID, "assets", "images")
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		return nil, err
+	}
+	a.removeGeneratedImageArtifacts(projectID, sceneID)
+
+	candidates := make([]imageCandidate, 0, len(images))
+	for index, image := range images {
+		raw, err := a.loadGeneratedImageBytes(image)
+		if err != nil {
+			return nil, err
+		}
+		ext := detectImageExtension(image.URL, image.LocalPath, image.MimeType)
+		fileName := fmt.Sprintf("%s__%02d%s", sceneID, index+1, ext)
+		targetPath := filepath.Join(targetDir, fileName)
+		if err := os.WriteFile(targetPath, raw, 0o644); err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, imageCandidate{
+			CandidateID:     fmt.Sprintf("%s-%02d", sceneID, index+1),
+			SourceIndex:     index,
+			ImageURL:        image.URL,
+			ImageLocalPath:  targetPath,
+			ImagePreviewURL: a.projectStaticURL(projectID, filepath.Join("assets", "images", fileName)),
+			ImageMimeType:   image.MimeType,
+		})
+	}
+	return candidates, nil
+}
+
+func applySelectedImageCandidate(target *sceneFile, candidates []imageCandidate, selectedIndex int) error {
+	if len(candidates) == 0 {
+		return errors.New("image candidates are empty")
+	}
+	if selectedIndex < 0 || selectedIndex >= len(candidates) {
+		return fmt.Errorf("candidate_index %d is out of range", selectedIndex)
+	}
+	selected := candidates[selectedIndex]
+	target.SelectedImageIdx = selectedIndex
+	target.ImageCandidates = candidates
+	target.ImageURL = selected.ImageURL
+	target.ImageLocalPath = selected.ImageLocalPath
+	target.ImagePreviewURL = selected.ImagePreviewURL
+	target.ImageMimeType = selected.ImageMimeType
+	return nil
+}
+
+func applySelectedKeyframeCandidate(target *keyframe, candidates []imageCandidate, selectedIndex int) error {
+	if len(candidates) == 0 {
+		return errors.New("image candidates are empty")
+	}
+	if selectedIndex < 0 || selectedIndex >= len(candidates) {
+		return fmt.Errorf("candidate_index %d is out of range", selectedIndex)
+	}
+	selected := candidates[selectedIndex]
+	target.SelectedImageIdx = selectedIndex
+	target.ImageCandidates = candidates
+	target.ImageURL = selected.ImageURL
+	target.ImageLocalPath = selected.ImageLocalPath
+	target.ImagePreviewURL = selected.ImagePreviewURL
+	target.ImageMimeType = selected.ImageMimeType
+	return nil
 }
 
 func (a *app) getProjectAssets(projectID string) (map[string]any, error) {
@@ -1957,6 +2072,54 @@ func (a *app) getProjectAssets(projectID string) (map[string]any, error) {
 			"preview_root": a.projectStaticURL(projectID, ""),
 		},
 	}, nil
+}
+
+func (a *app) selectSceneImageCandidate(projectID string, sceneID string, candidateIndex int) (sceneFile, error) {
+	project, err := a.readProject(projectID)
+	if err != nil {
+		return sceneFile{}, err
+	}
+
+	baseSceneID := sceneID
+	keyframeIndex := -1
+	if strings.Contains(sceneID, "_kf") {
+		parts := strings.Split(sceneID, "_kf")
+		baseSceneID = parts[0]
+		keyframeIndex, _ = strconv.Atoi(parts[1])
+	}
+
+	scene, err := a.readSceneFile(projectID, baseSceneID)
+	if err != nil {
+		return sceneFile{}, err
+	}
+
+	if keyframeIndex >= 0 {
+		if keyframeIndex >= len(scene.Keyframes) {
+			return sceneFile{}, errors.New("keyframe does not exist")
+		}
+		if err := applySelectedKeyframeCandidate(&scene.Keyframes[keyframeIndex], scene.Keyframes[keyframeIndex].ImageCandidates, candidateIndex); err != nil {
+			return sceneFile{}, err
+		}
+	} else {
+		if err := applySelectedImageCandidate(&scene, scene.ImageCandidates, candidateIndex); err != nil {
+			return sceneFile{}, err
+		}
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	invalidateSceneDerivedMedia(&scene)
+	scene.UpdatedAt = now
+	if err := a.writeSceneFile(projectID, scene); err != nil {
+		return sceneFile{}, err
+	}
+
+	invalidateProjectFinalVideo(&project)
+	project.UpdatedAt = now
+	if err := a.writeProject(project); err != nil {
+		return sceneFile{}, err
+	}
+
+	return scene, nil
 }
 
 func newTask(kind string, sceneID string, status string, message string, now string) taskFile {
@@ -2245,16 +2408,162 @@ func isFinalVideoStale(project projectFile, scenes []sceneFile) bool {
 	return false
 }
 
+func extractCharacterBibleEntries(characterBible any) []map[string]any {
+	switch typed := characterBible.(type) {
+	case []any:
+		result := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			if entry, ok := item.(map[string]any); ok {
+				result = append(result, entry)
+			}
+		}
+		return result
+	case map[string]any:
+		if nested, ok := typed["characters"].([]any); ok {
+			return extractCharacterBibleEntries(nested)
+		}
+		result := make([]map[string]any, 0, len(typed))
+		for _, value := range typed {
+			if entry, ok := value.(map[string]any); ok {
+				result = append(result, entry)
+			}
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
+func filterCharacterBible(characterBible any, characterIDs []string) []map[string]any {
+	entries := extractCharacterBibleEntries(characterBible)
+	if len(entries) == 0 {
+		return nil
+	}
+	if len(characterIDs) == 0 {
+		return entries
+	}
+	allowed := make(map[string]struct{}, len(characterIDs))
+	for _, characterID := range characterIDs {
+		characterID = strings.TrimSpace(characterID)
+		if characterID != "" {
+			allowed[characterID] = struct{}{}
+		}
+	}
+	filtered := make([]map[string]any, 0, len(entries))
+	for _, entry := range entries {
+		charID, _ := requiredStringField(entry, "char_id")
+		if _, ok := allowed[charID]; ok {
+			filtered = append(filtered, entry)
+		}
+	}
+	if len(filtered) > 0 {
+		return filtered
+	}
+	return entries
+}
+
+func joinCharacterIDs(characterIDs []string) string {
+	cleaned := make([]string, 0, len(characterIDs))
+	for _, characterID := range characterIDs {
+		characterID = strings.TrimSpace(characterID)
+		if characterID != "" {
+			cleaned = append(cleaned, characterID)
+		}
+	}
+	if len(cleaned) == 0 {
+		return "无"
+	}
+	return strings.Join(cleaned, ", ")
+}
+
+func buildCharacterConsistencyPrompt(characterBible any, characterIDs []string) string {
+	entries := filterCharacterBible(characterBible, characterIDs)
+	if len(entries) == 0 {
+		return "[]"
+	}
+	blocks := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		name, _ := requiredStringField(entry, "name")
+		charID, _ := requiredStringField(entry, "char_id")
+		typeName, _ := requiredStringField(entry, "type")
+		appearance, _ := requiredStringField(entry, "appearance")
+		personality, _ := requiredStringField(entry, "personality")
+		style, _ := requiredStringField(entry, "style")
+		age, _ := requiredStringField(entry, "age")
+		face, _ := requiredStringField(entry, "face")
+		faceFeatures, _ := requiredStringField(entry, "face_features")
+		eyes, _ := requiredStringField(entry, "eyes")
+		hairstyle, _ := requiredStringField(entry, "hairstyle")
+		bodyType, _ := requiredStringField(entry, "body_type")
+		outfit, ok := requiredStringField(entry, "signature_outfit")
+		if !ok {
+			outfit, _ = requiredStringField(entry, "outfit")
+		}
+		accessories, _ := requiredStringField(entry, "accessories")
+		colorPalette, _ := requiredStringField(entry, "color_palette")
+		temperament, _ := requiredStringField(entry, "temperament")
+		consistencyNotes, _ := requiredStringField(entry, "consistency_notes")
+		blocks = append(blocks, strings.TrimSpace(fmt.Sprintf(`
+- 角色 %s (%s, %s)
+  外貌锚点: %s
+  脸部/五官: %s；%s；眼睛/表情: %s
+  年龄/体态: %s；%s
+  发型/头部特征: %s
+  标志穿着/材质/配饰: %s；%s
+  气质/性格: %s；%s
+  风格/配色: %s；%s
+  一致性要求: 所有画面必须保持同一角色的脸型、五官、年龄感、体型、服饰、材质、主色和辨识特征一致，不允许每一帧变脸、变装、变年龄、变物种。
+  补充说明: %s
+`, fallbackString(name, charID), fallbackString(charID, "unknown"), fallbackString(typeName, "未注明类型"), fallbackString(appearance, "严格沿用角色圣经，不得随意改写"),
+			fallbackString(face, "需根据角色圣经固定脸型/脸蛋轮廓"), fallbackString(faceFeatures, "需固定五官细节"), fallbackString(eyes, "需保持稳定神情"),
+			fallbackString(age, "需明确年龄感或幼态/成年态"), fallbackString(bodyType, "需固定体型比例"),
+			fallbackString(hairstyle, "如非人角色则固定头部外形/轮廓"), fallbackString(outfit, "需固定标志性穿着、材质或表面纹理"), fallbackString(accessories, "无则明确不佩戴配饰"),
+			fallbackString(temperament, "保持稳定气质"), fallbackString(personality, "保持稳定性格外化"), fallbackString(style, "保持统一视觉风格"), fallbackString(colorPalette, "保持统一主色"),
+			fallbackString(consistencyNotes, "未提供时也要根据现有设定补全稳定锚点并全片复用"))))
+	}
+	return strings.Join(blocks, "\n")
+}
+
+func buildFilteredCharacterBibleJSON(characterBible any, characterIDs []string) string {
+	typed, ok := characterBible.(map[string]any)
+	if !ok {
+		return "{}"
+	}
+
+	filtered := make(map[string]any)
+	for _, characterID := range characterIDs {
+		characterID = strings.TrimSpace(characterID)
+		if characterID == "" {
+			continue
+		}
+		if value, exists := typed[characterID]; exists {
+			filtered[characterID] = value
+		}
+	}
+	return compactJSONObject(filtered)
+}
+
+func fallbackString(primary string, fallback string) string {
+	if strings.TrimSpace(primary) != "" {
+		return strings.TrimSpace(primary)
+	}
+	return fallback
+}
+
+func effectiveKeyframeCharacters(scene sceneFile, keyframe keyframe) []string {
+	if len(keyframe.Characters) > 0 {
+		return keyframe.Characters
+	}
+	return scene.Characters
+}
+
 func buildSceneImagePrompt(storyboard map[string]any, scene sceneFile) string {
 	subjectPrompt, _ := requiredStringField(scene.Prompt, "subject_prompt")
 	scenePrompt, _ := requiredStringField(scene.Prompt, "scene_prompt")
 	fullPrompt, _ := requiredStringField(scene.Prompt, "full_prompt")
-	if fullPrompt != "" {
-		return fullPrompt
-	}
 
 	globalStyle := compactJSONObject(storyboard["global_style"])
-	characterBible := compactJSONObject(storyboard["character_bible"])
+	characterAnchors := buildCharacterConsistencyPrompt(storyboard["character_bible"], scene.Characters)
 	environment := compactJSONObject(scene.Environment)
 	visual := compactJSONObject(scene.Visual)
 	audio := compactJSONObject(scene.Audio)
@@ -2272,17 +2581,25 @@ Aspect ratio constraint (strict):
 Scene title: %s
 Story function: %s
 Narration: %s
+Only allowed characters in this frame: %s
 Subject prompt: %s
 Scene prompt: %s
+Existing full prompt reference: %s
 Global style: %s
-Character bible: %s
+Character consistency anchors:
+%s
 Environment: %s
 Visual guidance: %s
 Audio reference: %s
 Effects mood: %s
 
-Return the best single image for this scene, ensuring the composition matches the %s aspect ratio.
-`, aspectRatio, aspectRatio, scene.Title, scene.StoryFunction, scene.Narration, subjectPrompt, scenePrompt, globalStyle, characterBible, environment, visual, audio, effects, aspectRatio))
+Hard consistency rules:
+- The same named character must keep the same appearance, face, age impression, clothing, accessories, body proportion, temperament, and signature colors across every generated frame.
+- If the character is non-human, keep the same body silhouette, material/texture, facial layout, markings, glow, and recognizable features across all frames.
+- Do not add any extra people or faces outside the allowed character list.
+
+Return all generated image options for this scene, ensuring every option matches the same character identity and the %s aspect ratio.
+`, aspectRatio, aspectRatio, scene.Title, scene.StoryFunction, scene.Narration, joinCharacterIDs(scene.Characters), subjectPrompt, scenePrompt, fallbackString(fullPrompt, "无"), globalStyle, characterAnchors, environment, visual, audio, effects, aspectRatio))
 }
 
 func compactJSONObject(value any) string {
@@ -2477,7 +2794,7 @@ func resolveVideoDimensions(aspectRatio string, requestedWidth int, requestedHei
 	}
 }
 
-func runFFmpegSceneCompose(ffmpegPath string, scene sceneFile, outputPath string, width int, height int, fps int, subtitleStyle string) error {
+func runFFmpegSceneCompose(ffmpegPath string, scene sceneFile, outputPath string, width int, height int, fps int) error {
 	durationSec := float64(maxInt(scene.AudioDurationMs, scene.SceneDurationMs)) / 1000.0
 	if durationSec <= 0 {
 		durationSec = float64(maxInt(scene.DurationHintSec, 3))
@@ -2512,7 +2829,7 @@ func runFFmpegSceneCompose(ffmpegPath string, scene sceneFile, outputPath string
 
 		// 拼接所有图片
 		if imageCount == 1 {
-			filterParts = append(filterParts, "[v0trim][vout]")
+			filterParts = append(filterParts, "[v0trim]format=yuv420p[vout]")
 		} else {
 			// 拼接多个图片
 			concatInputs := ""
@@ -2520,12 +2837,7 @@ func runFFmpegSceneCompose(ffmpegPath string, scene sceneFile, outputPath string
 				concatInputs += fmt.Sprintf("[v%dtrim]", i)
 			}
 			filterParts = append(filterParts, fmt.Sprintf("%sconcat=n=%d:v=1:a=0[vconcat]", concatInputs, imageCount))
-			// 添加字幕
-			if scene.SubtitleLocalPath != "" && fileExists(scene.SubtitleLocalPath) {
-				filterParts = append(filterParts, fmt.Sprintf("[vconcat]subtitles='%s':force_style='%s',format=yuv420p[vout]", escapeFFmpegFilterPath(scene.SubtitleLocalPath), escapeFFmpegForceStyle(subtitleStyle)))
-			} else {
-				filterParts = append(filterParts, "[vconcat]format=yuv420p[vout]")
-			}
+			filterParts = append(filterParts, "[vconcat]format=yuv420p[vout]")
 		}
 
 		filter = strings.Join(filterParts, ";")
@@ -2533,7 +2845,7 @@ func runFFmpegSceneCompose(ffmpegPath string, scene sceneFile, outputPath string
 	} else {
 		// 只有一张图片，使用原有逻辑
 		cameraMotion := resolveSceneCameraMotion(scene)
-		filter = buildSceneVideoFilter(scene.SubtitleLocalPath, width, height, fps, cameraMotion, subtitleStyle)
+		filter = buildSceneVideoFilter(width, height, fps, cameraMotion)
 		args = []string{
 			"-y",
 			"-loop", "1",
@@ -2556,12 +2868,9 @@ func runFFmpegSceneCompose(ffmpegPath string, scene sceneFile, outputPath string
 	return nil
 }
 
-func buildSceneVideoFilter(subtitlePath string, width int, height int, fps int, cameraMotion string, subtitleStyle string) string {
+func buildSceneVideoFilter(width int, height int, fps int, cameraMotion string) string {
 	motionFilter := buildCameraMotionFilter(width, height, fps, cameraMotion)
 	base := fmt.Sprintf("[0:v]scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,setsar=1,%s", width, height, width, height, motionFilter)
-	if subtitlePath != "" && fileExists(subtitlePath) {
-		base += fmt.Sprintf(",subtitles='%s':force_style='%s'", escapeFFmpegFilterPath(subtitlePath), escapeFFmpegForceStyle(subtitleStyle))
-	}
 	base += ",format=yuv420p[vout]"
 	return base
 }
@@ -2586,31 +2895,6 @@ func resolveSceneCameraMotion(scene sceneFile) string {
 		return cameraMotion
 	}
 	return "slow_zoom_in"
-}
-
-func buildSubtitleForceStyle(storyboard map[string]any) string {
-	fontSize := 24
-	marginV := 18
-	if videoProfile, ok := storyboard["video_profile"].(map[string]any); ok {
-		if subtitleStyle, ok := videoProfile["subtitle_style"].(map[string]any); ok {
-			if size, ok := requiredPositiveIntField(subtitleStyle, "font_size"); ok {
-				fontSize = size
-			}
-			if position, ok := requiredStringField(subtitleStyle, "position"); ok && position == "bottom-center" {
-				marginV = 18
-			}
-		}
-	}
-	return fmt.Sprintf("FontName=Noto Sans CJK SC,FontSize=%d,PrimaryColour=&H00FFFFFF,OutlineColour=&H78000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=2,MarginV=%d", fontSize, marginV)
-}
-
-func escapeFFmpegFilterPath(path string) string {
-	replacer := strings.NewReplacer("\\", "\\\\", ":", "\\:", "'", "\\'")
-	return replacer.Replace(path)
-}
-
-func escapeFFmpegForceStyle(style string) string {
-	return strings.ReplaceAll(style, "'", "\\'")
 }
 
 func runFFmpegFinalCompose(ffmpegPath string, scenes []sceneFile, outputPath string, width int, height int, fps int, transition string, transitionDurationMs int) error {
@@ -2740,7 +3024,6 @@ func writeScenePreviewHTML(path string, projectID string, scene sceneFile) error
       h1 { margin: 0 0 10px; font-size: 22px; }
       p { margin: 8px 0; line-height: 1.6; color: #d7def5; }
       audio { width: 100%%; margin-top: 12px; }
-      .subtitle { margin-top: 14px; padding: 12px 14px; border-radius: 12px; background: rgba(255,255,255,0.08); font-size: 18px; }
       .hint { font-size: 13px; color: #90a0c2; }
     </style>
   </head>
@@ -2751,7 +3034,6 @@ func writeScenePreviewHTML(path string, projectID string, scene sceneFile) error
         <div class="meta">
           <h1>%s</h1>
           <p>%s</p>
-          <div class="subtitle">%s</div>
           <audio controls autoplay src="%s"></audio>
           <p class="hint">当前环境未检测到 ffmpeg，已生成 HTML 预览 fallback。安装 ffmpeg 后再次调用 /video 接口即可生成 MP4。</p>
           <p class="hint">项目：%s / Scene：%s</p>
@@ -2760,7 +3042,7 @@ func writeScenePreviewHTML(path string, projectID string, scene sceneFile) error
     </div>
   </body>
 </html>
-`, html.EscapeString(scene.Title), imageSlider, html.EscapeString(scene.Title), html.EscapeString(scene.Narration), html.EscapeString(preferredSubtitleText(scene)), scene.AudioPreviewURL, html.EscapeString(projectID), html.EscapeString(scene.SceneID))
+`, html.EscapeString(scene.Title), imageSlider, html.EscapeString(scene.Title), html.EscapeString(scene.Narration), scene.AudioPreviewURL, html.EscapeString(projectID), html.EscapeString(scene.SceneID))
 	return os.WriteFile(path, []byte(body), 0o644)
 }
 
@@ -2779,7 +3061,7 @@ func writeFinalVideoPreviewHTML(path string, projectID string, projectTitle stri
 				items.WriteString("<audio controls src=\"" + html.EscapeString(scene.AudioPreviewURL) + "\"></audio>")
 			}
 		}
-		items.WriteString("<p>" + html.EscapeString(preferredSubtitleText(scene)) + "</p>")
+		items.WriteString("<p>" + html.EscapeString(scene.Narration) + "</p>")
 		items.WriteString("</section>")
 	}
 
@@ -3105,13 +3387,15 @@ func validateStoryboard(raw []byte, projectID string, validatedAt string) (story
 					if kfMap, ok := kfItem.(map[string]any); ok {
 						frameID, _ := requiredStringField(kfMap, "frame_id")
 						seq, _ := requiredPositiveIntField(kfMap, "sequence")
+						characters, _ := requiredStringSliceField(kfMap, "characters")
 						prompt, _ := requiredObjectField(kfMap, "prompt")
 						visual, _ := requiredObjectField(kfMap, "visual")
 						keyframes = append(keyframes, keyframe{
-							FrameID:  frameID,
-							Sequence: seq,
-							Prompt:   prompt,
-							Visual:   visual,
+							FrameID:    frameID,
+							Sequence:   seq,
+							Characters: characters,
+							Prompt:     prompt,
+							Visual:     visual,
 						})
 					}
 				}
@@ -3251,6 +3535,37 @@ func buildBaseStoryboardPrompt(project projectFile) string {
 7. 内容适合儿童故事视频，语气温和，结构清晰。
 8. JSON 的第一个字符必须是 {，最后一个字符必须是 }。
 9. video_profile 中必须包含 aspect_ratio 字段，值为 %s。
+10. character_bible 中每个角色都必须尽量具体，至少要稳定描述：char_id, name, type, appearance, personality, style，并且必须尽可能补充以下字段来锁定角色一致性：age、gender_presentation、face、face_shape、face_features、eyes、eyebrows、nose、mouth、hairstyle、hair_color、body_type、height_impression、skin_tone 或 body_surface、signature_outfit 或 outfit、upper_clothing、lower_clothing、shoes、accessories、color_palette、temperament、expression_habit、gesture_habit、consistency_notes。不要只写“可爱的小女孩”或“帅气少年”这种模糊描述，必须写到可以稳定复现同一角色的程度。
+11. 如果角色是非人类、动物、精灵、云朵、星星、玩偶等，也必须把对应的“脸部布局/表情区域、轮廓比例、材质、表面纹理、发光方式、标志花纹、主色和辨识特征”写具体，保证跨场景生成时仍然是同一个角色。
+12. scenes[*].prompt.subject_prompt 必须直接写出当前场景角色的稳定外貌锚点，不要只写角色编号，必须显式体现外貌长相、脸蛋/脸型、五官、年龄感、气质、特征、衣物穿着、配饰、体态，或非人角色的对应特征。
+
+character_bible 中单个角色的推荐详细结构示例：
+{
+  "char_id": "c01",
+  "name": "棉棉",
+  "type": "主角小云朵",
+  "age": "儿童感、约 6 岁的幼态气质",
+  "gender_presentation": "中性偏女孩气质",
+  "appearance": "圆润蓬松的小云朵，整体雪白，边缘像棉花糖一样柔软",
+  "face": "圆圆的脸蛋轮廓，脸部区域位于云朵正前方中央",
+  "face_shape": "圆脸、幼态",
+  "face_features": "脸颊饱满，带淡淡粉晕，小下巴不明显",
+  "eyes": "黑亮的大眼睛，眼距略宽，眼神温柔",
+  "eyebrows": "短短的弯眉，表情柔和",
+  "mouth": "小巧微笑嘴型",
+  "hairstyle": "头顶有一缕轻轻翘起的云尖",
+  "hair_color": "无，保持雪白云朵本体",
+  "body_type": "圆滚滚、轻盈、小巧",
+  "height_impression": "比身旁小星星略大一圈",
+  "body_surface": "柔软云朵绒感，边缘带淡淡柔光",
+  "signature_outfit": "系着浅蓝色小围巾",
+  "accessories": ["浅蓝色小围巾"],
+  "color_palette": ["雪白", "浅蓝", "淡粉"],
+  "temperament": "温柔、治愈、勇敢",
+  "expression_habit": "常带轻柔微笑和关切眼神",
+  "gesture_habit": "说话时会轻轻前倾、靠近对方",
+  "consistency_notes": "所有场景都保持圆脸幼态、雪白云朵体积、浅蓝围巾、温柔大眼和淡粉脸颊"
+}
 
 scene 的最小合法结构示例：
 {
@@ -3296,6 +3611,8 @@ scene 的最小合法结构示例：
 - 不要把 environment、visual、effects 写成一句话字符串。
 - 不要遗漏 prompt.subject_prompt 或 prompt.scene_prompt。
 - character_bible、audio_profile、video_profile、render_rules 也要保持 object/array 结构，不要输出自然语言段落。
+- character_bible 的角色设定要足够具体，后续所有场景都要严格复用同一角色的脸、年龄感、服装/材质、主色和辨识特征。
+- 角色描述必须尽量覆盖：外貌长相、脸蛋/脸型、五官、年纪、气质、体态、衣物、穿着、配饰、主色、材质、习惯表情。
 - 根据目标视频总时长控制故事的长度和场景数量，确保 narration 的总字数适合目标时长。
 - 所有场景的视觉描述和提示词必须符合画面比例 %s 的构图要求。
 %s
@@ -3308,7 +3625,7 @@ scene 的最小合法结构示例：
 `, aspectRatio, aspectRatio, narrationLengthInfo, project.ProjectID, project.Title, durationInfo, imageSwitchInfo, aspectRatioInfo, project.Story))
 }
 
-func buildKeyframesPrompt(scene map[string]any, imageCount int, aspectRatio string, characterBible map[string]any, globalStyle map[string]any, renderRules map[string]any) string {
+func buildKeyframesPrompt(scene map[string]any, imageCount int, aspectRatio string, characterBible any, globalStyle map[string]any, renderRules map[string]any) string {
 	title := ""
 	narration := ""
 	storyFunction := ""
@@ -3379,8 +3696,11 @@ func buildKeyframesPrompt(scene map[string]any, imageCount int, aspectRatio stri
 		visual = fmt.Sprintf("%s, %s, %s, %s", shotType, cameraMotion, composition, action)
 	}
 
+	relevantCharacterIDs := make([]string, 0, len(characters))
+	relevantCharacterIDs = append(relevantCharacterIDs, characters...)
+
 	// 构建角色圣经描述
-	characterBibleStr := compactJSONObject(characterBible)
+	characterBibleStr := buildCharacterConsistencyPrompt(characterBible, relevantCharacterIDs)
 
 	// 构建全局风格描述
 	globalStyleStr := compactJSONObject(globalStyle)
@@ -3405,11 +3725,11 @@ func buildKeyframesPrompt(scene map[string]any, imageCount int, aspectRatio stri
 角色圣经：
 %s
 
-场景信息：
-- 场景标题：%s
-- 故事功能：%s
-- 旁白：%s
-- 场景涉及角色ID：%s
+	场景信息：
+	- 场景标题：%s
+	- 故事功能：%s
+	- 旁白：%s
+	- 场景涉及角色ID：%s
 - 物体：%s
 - 环境：%s
 - 视觉描述：%s
@@ -3443,15 +3763,18 @@ func buildKeyframesPrompt(scene map[string]any, imageCount int, aspectRatio stri
   ]
 }
 
-请确保：
+	请确保：
 1. 每个关键帧都有独特的视觉描述
 2. 关键帧之间的动作有连贯性
 3. 所有关键帧都符合场景的整体氛围
 4. 所有关键帧的构图必须符合画面比例 %s
 5. 每个关键帧必须包含 characters 字段，标明该帧涉及的角色ID
-6. 提示词中必须符合角色的具体外貌、性格和动作习惯描述
-7. 提示词必须符合全局风格和渲染规则
-8. 只返回 JSON，不要返回其他内容
+6. 每个关键帧的 characters 只能填写该帧实际出现的角色，不能漏填，也不能填入未出现的角色
+7. prompt.subject_prompt 必须显式写出该帧角色的稳定外貌锚点，例如年龄感、脸型/脸蛋、五官、眼神、发型或头部轮廓、体型、衣物穿着、配饰、材质、主色、辨识特征
+8. 同一个角色在所有关键帧中必须保持同一张脸、同一年龄感、同一套标志性穿着/材质、同一配色和同一气质，不允许帧间漂移
+9. 如果角色是非人类，也必须固定体表材质、发光方式、表情布局、轮廓比例和标志特征
+10. 提示词必须符合全局风格和渲染规则
+11. 只返回 JSON，不要返回其他内容
 `, imageCount, aspectRatio, aspectRatio, globalStyleStr, renderRulesStr, characterBibleStr, title, storyFunction, narration, strings.Join(characters, ", "), strings.Join(objects, ", "), environment, visual, aspectRatio))
 }
 
@@ -3478,11 +3801,11 @@ func buildKeyframeImagePrompt(storyboardRoot map[string]any, scene sceneFile, ke
 	aspectRatio := resolveSceneAspectRatio(storyboardRoot)
 
 	// 从 storyboard 根提取角色圣经、全局风格和渲染规则
-	characterBible, _ := storyboardRoot["character_bible"].(map[string]any)
+	characterBible := storyboardRoot["character_bible"]
 	globalStyle, _ := storyboardRoot["global_style"].(map[string]any)
 	renderRules, _ := storyboardRoot["render_rules"].(map[string]any)
 
-	characterBibleStr := compactJSONObject(characterBible)
+	characterBibleStr := buildFilteredCharacterBibleJSON(characterBible, effectiveKeyframeCharacters(scene, keyframe))
 	globalStyleStr := compactJSONObject(globalStyle)
 	renderRulesStr := compactJSONObject(renderRules)
 
@@ -3500,14 +3823,14 @@ func buildKeyframeImagePrompt(storyboardRoot map[string]any, scene sceneFile, ke
 渲染规则：
 %s
 
-角色圣经（必须严格按照此描述绘制角色外貌和动作）：
+角色圣经（这是 storyboard 中原始角色信息，已过滤为当前关键帧涉及角色，必须原样参考，不要改写设定）：
 %s
 
 场景信息：
 - 场景标题：%s
 - 故事功能：%s
 - 旁白：%s
-- 场景涉及角色：%s
+- 当前关键帧允许出现的角色ID：%s
 - 物体：%s
 - 环境：%s
 - 光影效果：%s
@@ -3524,13 +3847,15 @@ func buildKeyframeImagePrompt(storyboardRoot map[string]any, scene sceneFile, ke
 5. 图片构图必须符合画面比例 %s 的要求
 6. 角色外貌必须严格按照角色圣经中的描述绘制，不能自行发挥
 7. 画面必须符合全局风格和渲染规则
-8. 画面中只能出现"场景涉及角色"中列出的角色，绝对不能出现任何未提及的角色
+8. 画面中只能出现"当前关键帧允许出现的角色ID"中列出的角色，绝对不能出现任何未提及的角色
 9. 严禁出现无关的人脸、无关的人物、无关的角色，只绘制场景涉及的角色
+10. 同一个角色在所有关键帧中必须保持同一张脸、同一年龄感、同一服装/材质、同一主色和同一辨识特征
+11. 提示词中的角色描述必须足够具体，必须锁定外貌长相、脸部特征、气质、体态、衣物穿着、配饰、年龄感
 
 提示词：
 - 主体提示：%s
 - 场景提示：%s
-`, aspectRatio, aspectRatio, globalStyleStr, renderRulesStr, characterBibleStr, scene.Title, scene.StoryFunction, scene.Narration, strings.Join(scene.Characters, ", "), strings.Join(scene.Objects, ", "), fmt.Sprintf("%s, %s, %s, %s", scene.Environment["location"], scene.Environment["time_of_day"], scene.Environment["weather"], scene.Environment["atmosphere"]), fmt.Sprintf("光照-%s, 动态-%s, 后处理-%s", scene.Effects["lighting"], scene.Effects["motion"], scene.Effects["post_process"]), keyframe.Sequence, fmt.Sprintf("%s, %s, %s, %s", keyframe.Visual["shot_type"], keyframe.Visual["camera_motion"], keyframe.Visual["composition"], keyframe.Visual["action"]), aspectRatio, subjectPrompt, scenePrompt))
+`, aspectRatio, aspectRatio, globalStyleStr, renderRulesStr, characterBibleStr, scene.Title, scene.StoryFunction, scene.Narration, joinCharacterIDs(effectiveKeyframeCharacters(scene, keyframe)), strings.Join(scene.Objects, ", "), fmt.Sprintf("%s, %s, %s, %s", scene.Environment["location"], scene.Environment["time_of_day"], scene.Environment["weather"], scene.Environment["atmosphere"]), fmt.Sprintf("光照-%s, 动态-%s, 后处理-%s", scene.Effects["lighting"], scene.Effects["motion"], scene.Effects["post_process"]), keyframe.Sequence, fmt.Sprintf("%s, %s, %s, %s", keyframe.Visual["shot_type"], keyframe.Visual["camera_motion"], keyframe.Visual["composition"], keyframe.Visual["action"]), aspectRatio, subjectPrompt, scenePrompt))
 }
 
 func buildStoryboardPrompt(project projectFile) string {
@@ -3931,6 +4256,67 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
         border: 1px solid #324068;
         color: #cfd8f3;
       }
+      .scene-media-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        align-items: start;
+        gap: 12px;
+        margin-top: 12px;
+      }
+      .image-panel {
+        padding: 12px;
+        border-radius: 10px;
+        background: #101933;
+        border: 1px solid #26304f;
+        width: 100%%;
+        max-width: 280px;
+      }
+      .image-panel h4 {
+        margin: 0 0 10px;
+        font-size: 14px;
+      }
+      .image-preview {
+        width: auto;
+        max-width: 100%%;
+        max-height: 220px;
+        object-fit: contain;
+        border-radius: 10px;
+        display: block;
+        background: #060b18;
+        border: 1px solid #26304f;
+        margin: 0 auto;
+      }
+      .image-candidates {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      .candidate-btn {
+        padding: 7px 10px;
+        border-radius: 999px;
+        border: 1px solid #324068;
+        background: #182342;
+        color: #cfd8f3;
+        cursor: pointer;
+      }
+      .candidate-btn.active {
+        background: #23406c;
+        border-color: #6ea8fe;
+        color: #f8fbff;
+      }
+      .candidate-btn[disabled] {
+        opacity: 1;
+        cursor: default;
+      }
+      .force-ready {
+        transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+      }
+      .force-ready.force-active {
+        background: #6c2a1e;
+        border-color: #ff9b73;
+        color: #fff5f1;
+      }
       .small {
         font-size: 12px;
       }
@@ -4015,6 +4401,7 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
             <li><code>GET /api/projects/{projectId}/scenes/{sceneId}</code></li>
             <li><code>POST /api/projects/{projectId}/storyboard</code></li>
             <li><code>POST /api/projects/{projectId}/scenes/{sceneId}/image</code></li>
+            <li><code>POST /api/projects/{projectId}/scenes/{sceneId}/image/select</code></li>
 			<li><code>POST /api/projects/{projectId}/scenes/{sceneId}/audio</code></li>
 			<li><code>POST /api/projects/{projectId}/scenes/{sceneId}/video</code></li>
 			<li><code>POST /api/projects/{projectId}/final-video</code></li>
@@ -4105,6 +4492,63 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
           return "-";
         }
         return kind.replaceAll("_", " ");
+      }
+
+      function resolveImageCandidates(imageOwner) {
+        if (!imageOwner) {
+          return [];
+        }
+        if (Array.isArray(imageOwner.image_candidates) && imageOwner.image_candidates.length > 0) {
+          return imageOwner.image_candidates;
+        }
+        if (imageOwner.image_preview_url || imageOwner.image_url) {
+          return [{
+            image_preview_url: imageOwner.image_preview_url,
+            image_url: imageOwner.image_url,
+            image_local_path: imageOwner.image_local_path,
+            image_mime_type: imageOwner.image_mime_type
+          }];
+        }
+        return [];
+      }
+
+      function resolveSelectedCandidateIndex(imageOwner, candidates) {
+        if (!candidates.length) {
+          return -1;
+        }
+        var selectedIndex = Number.isInteger(imageOwner && imageOwner.selected_image_index) ? imageOwner.selected_image_index : 0;
+        if (selectedIndex >= 0 && selectedIndex < candidates.length) {
+          return selectedIndex;
+        }
+        if (imageOwner && imageOwner.image_preview_url) {
+          for (var i = 0; i < candidates.length; i++) {
+            if (candidates[i].image_preview_url === imageOwner.image_preview_url) {
+              return i;
+            }
+          }
+        }
+        return 0;
+      }
+
+      function renderImagePanel(taskSceneId, title, imageOwner) {
+        var candidates = resolveImageCandidates(imageOwner);
+        if (!candidates.length) {
+          return "<div class=\"image-panel\"><h4>" + escapeHtml(title) + "</h4><div class=\"muted small\">暂无图片</div></div>";
+        }
+        var selectedIndex = resolveSelectedCandidateIndex(imageOwner, candidates);
+        var selected = candidates[selectedIndex] || candidates[0];
+        var previewUrl = selected.image_preview_url || selected.image_url || "";
+        var candidateButtons = candidates.map(function(candidate, index) {
+          var active = index === selectedIndex;
+          var label = active ? "已选图 " + (index + 1) : "切换图 " + (index + 1);
+          return "<button type=\"button\" class=\"candidate-btn" + (active ? " active" : "") + "\" data-scene-id=\"" + escapeHtml(taskSceneId) + "\" data-scene-action=\"select-image\" data-candidate-index=\"" + index + "\"" + (active ? " disabled" : "") + ">" + label + "</button>";
+        }).join("");
+        return "" +
+          "<div class=\"image-panel\">" +
+            "<h4>" + escapeHtml(title) + "</h4>" +
+            "<img class=\"image-preview\" src=\"" + escapeHtml(previewUrl) + "\" alt=\"" + escapeHtml(title) + "\" />" +
+            "<div class=\"image-candidates\">" + candidateButtons + "</div>" +
+          "</div>";
       }
 
       function isSceneTaskFinished(task) {
@@ -4204,8 +4648,20 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
             }
             var btnLabel = label + " (" + escapeHtml(task.status || "pending") + ")";
             var disabled = task.status === "running" ? " disabled" : "";
-            return "<button type=\"button\" data-scene-id=\"" + escapeHtml(task.scene_id) + "\" data-scene-action=\"image\"" + disabled + ">" + btnLabel + "</button>";
+            var forceAttrs = task.status === "success"
+              ? " class=\"force-ready\" data-force-eligible=\"true\" data-default-label=\"" + escapeHtml(btnLabel) + "\" data-force-label=\"强制重生 " + escapeHtml(label) + "\""
+              : "";
+            return "<button type=\"button\" data-scene-id=\"" + escapeHtml(task.scene_id) + "\" data-scene-action=\"image\"" + forceAttrs + disabled + ">" + btnLabel + "</button>";
           }).join("");
+
+          var imagePanelsHtml = "";
+          if (Array.isArray(scene.keyframes) && scene.keyframes.length > 0) {
+            imagePanelsHtml = scene.keyframes.map(function(keyframe, index) {
+              return renderImagePanel(scene.scene_id + "_kf" + index, "关键帧 " + (index + 1), keyframe);
+            }).join("");
+          } else {
+            imagePanelsHtml = renderImagePanel(scene.scene_id, "场景主图", scene);
+          }
 
           var audioTask = sceneTasks.find(function(task) { return task.kind === "scene_audio_generation" && task.scene_id === scene.scene_id; });
           var audioStatus = audioTask ? audioTask.status : "pending";
@@ -4228,6 +4684,7 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
               "</div>" +
               "<div class=\"muted small\" style=\"margin-top: 8px;\">image: " + escapeHtml(scene.image_status || "-") + " · audio: " + escapeHtml(scene.audio_status || "-") + " · video: " + escapeHtml(scene.compose_status || "-") + "</div>" +
               "<div class=\"task-chips\">" + taskHtml + "</div>" +
+              "<div class=\"scene-media-grid\">" + imagePanelsHtml + "</div>" +
               "<div class=\"scene-actions\">" +
                 imageButtonsHtml +
                 "<button type=\"button\" data-scene-id=\"" + escapeHtml(scene.scene_id) + "\" data-scene-action=\"audio\"" + audioDisabled + ">" + audioBtnLabel + "</button>" +
@@ -4336,17 +4793,59 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
         }
       });
 
-      function buildSceneActionRequestBody(action) {
-        if (action !== "audio") {
-          return null;
+      function buildSceneActionRequestBody(action, button) {
+        if (action === "audio") {
+          return {
+            provider_ref: "`+defaultEdgeTTSProviderRef+`",
+            voice_name: "`+defaultEdgeTTSVoiceName+`",
+            speaking_rate: "0%%",
+            pitch: "0Hz"
+          };
         }
-        return {
-          provider_ref: "`+defaultEdgeTTSProviderRef+`",
-          voice_name: "`+defaultEdgeTTSVoiceName+`",
-          speaking_rate: "0%%",
-          pitch: "0Hz"
-        };
+        if (action === "image" && button && button.dataset.forceMode === "true") {
+          return { force: true };
+        }
+        if (action === "select-image" && button) {
+          return { candidate_index: parseInt(button.dataset.candidateIndex || "0", 10) };
+        }
+        return null;
       }
+
+      function buildSceneActionPath(projectId, sceneId, action) {
+        if (action === "select-image") {
+          return "/api/projects/" + encodeURIComponent(projectId) + "/scenes/" + encodeURIComponent(sceneId) + "/image/select";
+        }
+        return "/api/projects/" + encodeURIComponent(projectId) + "/scenes/" + encodeURIComponent(sceneId) + "/" + encodeURIComponent(action);
+      }
+
+      function setForceButtonState(button, forceMode) {
+        if (!button || button.dataset.forceEligible !== "true") {
+          return;
+        }
+        button.dataset.forceMode = forceMode ? "true" : "false";
+        button.textContent = forceMode ? button.dataset.forceLabel : button.dataset.defaultLabel;
+        button.classList.toggle("force-active", forceMode);
+      }
+
+      sceneList.addEventListener("mouseover", function(event) {
+        var button = event.target.closest("button[data-force-eligible=\"true\"]");
+        if (!button) {
+          return;
+        }
+        setForceButtonState(button, true);
+      });
+
+      sceneList.addEventListener("mouseout", function(event) {
+        var button = event.target.closest("button[data-force-eligible=\"true\"]");
+        if (!button) {
+          return;
+        }
+        var related = event.relatedTarget;
+        if (related && button.contains(related)) {
+          return;
+        }
+        setForceButtonState(button, false);
+      });
 
       sceneList.addEventListener("click", async function(event) {
         const button = event.target.closest("button[data-scene-id][data-scene-action]");
@@ -4364,14 +4863,20 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
         setStatus("执行 " + sceneId + " 的 " + action + " 任务中...");
         try {
           const options = { method: "POST" };
-          const requestBody = buildSceneActionRequestBody(action);
+          const requestBody = buildSceneActionRequestBody(action, button);
           if (requestBody) {
             options.headers = { "Content-Type": "application/json" };
             options.body = JSON.stringify(requestBody);
           }
-          await callApi("/api/projects/" + encodeURIComponent(projectId) + "/scenes/" + encodeURIComponent(sceneId) + "/" + encodeURIComponent(action), options);
+          await callApi(buildSceneActionPath(projectId, sceneId, action), options);
           await loadProjectDetail(projectId);
-          setStatus(sceneId + " 的 " + action + " 任务已触发");
+          if (action === "select-image") {
+            setStatus(sceneId + " 已切换到候选图 " + ((parseInt(button.dataset.candidateIndex || "0", 10)) + 1));
+          } else if (action === "image" && button.dataset.forceMode === "true") {
+            setStatus(sceneId + " 已强制重生图片");
+          } else {
+            setStatus(sceneId + " 的 " + action + " 任务已触发");
+          }
         } catch (error) {
           setStatus(error.message);
         } finally {
