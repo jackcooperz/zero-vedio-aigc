@@ -61,6 +61,7 @@ async function getChromeWebSocketUrl(cdpUrl: string, timeoutMs: number): Promise
 
 export class BrowserSessionManager {
   private readonly profiles: BrowserProfile[];
+  private readonly attachedBrowsers = new Map<string, Promise<PlaywrightBrowser>>();
 
   constructor(profiles: BrowserProfile[] = []) {
     this.profiles = profiles;
@@ -79,26 +80,54 @@ export class BrowserSessionManager {
     return profile;
   }
 
+  private async connectAttachedBrowser(profile: BrowserProfile): Promise<PlaywrightBrowser> {
+    const { chromium } = await import("playwright-core");
+    if (!profile.cdpUrl) {
+      throw new ZeroTokenError("BROWSER_PROFILE_NOT_FOUND", `${profile.profileId} missing cdpUrl`);
+    }
+    const wsUrl = await getChromeWebSocketUrl(profile.cdpUrl, profile.defaultTimeoutMs ?? 5000).catch((error) => {
+      throw new ZeroTokenError(
+        "BROWSER_CDP_UNAVAILABLE",
+        `Failed to connect to Debug Chrome at ${profile.cdpUrl}`,
+        { retryable: true, details: error },
+      );
+    });
+    const browser = await chromium.connectOverCDP(wsUrl);
+    browser.on?.("disconnected", () => {
+      this.attachedBrowsers.delete(profile.profileId);
+    });
+    return browser;
+  }
+
+  async shutdown(): Promise<void> {
+    const browsers = Array.from(this.attachedBrowsers.values());
+    this.attachedBrowsers.clear();
+    const settled = await Promise.allSettled(browsers);
+    await Promise.allSettled(
+      settled
+        .filter((item): item is PromiseFulfilledResult<PlaywrightBrowser> => item.status === "fulfilled")
+        .map((item) => item.value.close()),
+    );
+  }
+
   async connect(profileId?: string, startUrl?: string, pageUrlPatterns?: string[]): Promise<BrowserSession> {
     const profile = this.resolveProfile(profileId);
-    const { chromium } = await import("playwright-core");
 
     let browser: PlaywrightBrowser;
     if (profile.mode === "attach_only") {
-      if (!profile.cdpUrl) {
-        throw new ZeroTokenError("BROWSER_PROFILE_NOT_FOUND", `${profile.profileId} missing cdpUrl`);
+      let browserPromise = this.attachedBrowsers.get(profile.profileId);
+      if (!browserPromise) {
+        browserPromise = this.connectAttachedBrowser(profile);
+        this.attachedBrowsers.set(profile.profileId, browserPromise);
       }
-      const wsUrl = await getChromeWebSocketUrl(profile.cdpUrl, profile.defaultTimeoutMs ?? 5000).catch(
-        (error) => {
-          throw new ZeroTokenError(
-            "BROWSER_CDP_UNAVAILABLE",
-            `Failed to connect to Debug Chrome at ${profile.cdpUrl}`,
-            { retryable: true, details: error },
-          );
-        },
-      );
-      browser = await chromium.connectOverCDP(wsUrl);
+      try {
+        browser = await browserPromise;
+      } catch (error) {
+        this.attachedBrowsers.delete(profile.profileId);
+        throw error;
+      }
     } else {
+      const { chromium } = await import("playwright-core");
       browser = await chromium.launchPersistentContext(profile.userDataDir ?? "", {
         headless: profile.headless ?? false,
       });
@@ -126,9 +155,7 @@ export class BrowserSessionManager {
       browser,
       context,
       page,
-      close: async () => {
-        await browser.close();
-      },
+      close: async () => {},
     };
   }
 }

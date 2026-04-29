@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -27,9 +29,13 @@ const (
 )
 
 type app struct {
-	rootDir          string
-	projectsDir      string
-	zeroTokenCLIPath string
+	rootDir             string
+	projectsDir         string
+	zeroTokenBridgePath string
+	zeroTokenBridgeURL  string
+	zeroTokenBridgePort string
+	zeroTokenBridgeMu   sync.Mutex
+	zeroTokenBridgeCmd  *exec.Cmd
 }
 
 type createProjectRequest struct {
@@ -138,6 +144,16 @@ type bridgeResponse struct {
 	Result zeroTokenGenerate `json:"result"`
 	Error  string            `json:"error"`
 	Name   string            `json:"name"`
+}
+
+type zeroTokenBridgePayload struct {
+	RequestID      string         `json:"requestId,omitempty"`
+	ProjectID      string         `json:"projectId,omitempty"`
+	SceneID        string         `json:"sceneId,omitempty"`
+	ProviderRef    string         `json:"providerRef"`
+	Capability     string         `json:"capability,omitempty"`
+	Input          map[string]any `json:"input"`
+	RuntimeOptions map[string]any `json:"runtimeOptions,omitempty"`
 }
 
 type zeroTokenGenerate struct {
@@ -258,10 +274,12 @@ func main() {
 	}
 
 	server := &app{
-		rootDir:          rootDir,
-		projectsDir:      filepath.Join(rootDir, "projects"),
-		zeroTokenCLIPath: filepath.Join(rootDir, "dist", "zero-token", "bridge-cli.js"),
+		rootDir:             rootDir,
+		projectsDir:         filepath.Join(rootDir, "projects"),
+		zeroTokenBridgePath: filepath.Join(rootDir, "dist", "zero-token", "bridge-server.js"),
+		zeroTokenBridgePort: envOrDefault("ZERO_TOKEN_BRIDGE_PORT", "4390"),
 	}
+	server.zeroTokenBridgeURL = "http://127.0.0.1:" + server.zeroTokenBridgePort
 
 	if err := os.MkdirAll(server.projectsDir, 0o755); err != nil {
 		log.Fatalf("create projects dir: %v", err)
@@ -281,13 +299,14 @@ func main() {
 
 func (a *app) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":               true,
-		"projects_dir":     a.projectsDir,
-		"zero_token_cli":   a.zeroTokenCLIPath,
-		"zero_token_built": fileExists(a.zeroTokenCLIPath),
-		"edge_tts":         lookupCommand("edge-tts"),
-		"ffmpeg":           lookupCommand("ffmpeg"),
-		"ffprobe":          lookupCommand("ffprobe"),
+		"ok":                      true,
+		"projects_dir":            a.projectsDir,
+		"zero_token_bridge":       a.zeroTokenBridgePath,
+		"zero_token_bridge_url":   a.zeroTokenBridgeURL,
+		"zero_token_bridge_built": fileExists(a.zeroTokenBridgePath),
+		"edge_tts":                lookupCommand("edge-tts"),
+		"ffmpeg":                  lookupCommand("ffmpeg"),
+		"ffprobe":                 lookupCommand("ffprobe"),
 	})
 }
 
@@ -297,7 +316,7 @@ func (a *app) handleHome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeHTML(w, http.StatusOK, buildHomeHTML(a.projectsDir, fileExists(a.zeroTokenCLIPath)))
+	writeHTML(w, http.StatusOK, buildHomeHTML(a.projectsDir, fileExists(a.zeroTokenBridgePath)))
 }
 
 func (a *app) handleProjects(w http.ResponseWriter, r *http.Request) {
@@ -587,7 +606,7 @@ func (a *app) createProject(req createProjectRequest) (projectFile, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	aspectRatio := strings.TrimSpace(req.AspectRatio)
 	if aspectRatio == "" {
-		aspectRatio = "16:9"
+		aspectRatio = "9:16"
 	}
 	project := projectFile{
 		ProjectID:              projectID,
@@ -721,7 +740,7 @@ func (a *app) generateStoryboard(projectID string, req generateStoryboardRequest
 	tasks = pruneDerivedTasks(tasks)
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	task := newTask("storyboard_generation", "", "running", "Calling local zero-token bridge CLI", now)
+	task := newTask("storyboard_generation", "", "running", "Calling local zero-token bridge server", now)
 	tasks = append(tasks, task)
 	if writeErr := a.writeTasks(projectID, tasks); writeErr != nil {
 		return projectDetailResponse{}, writeErr
@@ -814,8 +833,8 @@ func (a *app) generateStoryboard(projectID string, req generateStoryboardRequest
 }
 
 func (a *app) runZeroTokenStoryboard(project projectFile, req generateStoryboardRequest) ([]byte, error) {
-	if !fileExists(a.zeroTokenCLIPath) {
-		return nil, fmt.Errorf("zero-token bridge CLI not found at %s; run npm run build first", a.zeroTokenCLIPath)
+	if !fileExists(a.zeroTokenBridgePath) {
+		return nil, fmt.Errorf("zero-token bridge server not found at %s; run npm run build first", a.zeroTokenBridgePath)
 	}
 
 	providerRef := defaultProviderRef(req.ProviderRef)
@@ -864,47 +883,142 @@ func (a *app) runZeroTokenStoryboard(project projectFile, req generateStoryboard
 	return normalized, nil
 }
 
+func (a *app) zeroTokenBridgeHealthy(client *http.Client) bool {
+	resp, err := client.Get(a.zeroTokenBridgeURL + "/healthz")
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
+func (a *app) startZeroTokenBridgeLocked() error {
+	cmd := exec.Command("node", a.zeroTokenBridgePath)
+	cmd.Dir = a.rootDir
+	cmd.Env = append(os.Environ(), "ZERO_TOKEN_BRIDGE_PORT="+a.zeroTokenBridgePort)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	a.zeroTokenBridgeCmd = cmd
+	go func() {
+		err := cmd.Wait()
+		a.zeroTokenBridgeMu.Lock()
+		if a.zeroTokenBridgeCmd == cmd {
+			a.zeroTokenBridgeCmd = nil
+		}
+		a.zeroTokenBridgeMu.Unlock()
+		if err != nil {
+			log.Printf("zero-token bridge server exited: %v", err)
+		}
+	}()
+	return nil
+}
+
+func (a *app) ensureZeroTokenBridge(ctx context.Context) error {
+	if !fileExists(a.zeroTokenBridgePath) {
+		return fmt.Errorf("zero-token bridge server not found at %s; run npm run build first", a.zeroTokenBridgePath)
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	if a.zeroTokenBridgeHealthy(client) {
+		return nil
+	}
+
+	a.zeroTokenBridgeMu.Lock()
+	defer a.zeroTokenBridgeMu.Unlock()
+	if a.zeroTokenBridgeHealthy(client) {
+		return nil
+	}
+	if a.zeroTokenBridgeCmd == nil {
+		if err := a.startZeroTokenBridgeLocked(); err != nil {
+			return fmt.Errorf("start zero-token bridge server: %w", err)
+		}
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if a.zeroTokenBridgeHealthy(client) {
+			return nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return fmt.Errorf("zero-token bridge server at %s did not become healthy", a.zeroTokenBridgeURL)
+}
+
+func (a *app) runZeroTokenGenerate(ctx context.Context, payload zeroTokenBridgePayload, timeoutMs int) (bridgeResponse, error) {
+	if timeoutMs <= 0 {
+		timeoutMs = 300000
+	}
+	if err := a.ensureZeroTokenBridge(ctx); err != nil {
+		return bridgeResponse{}, err
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return bridgeResponse{}, err
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMs+30000)*time.Millisecond)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, a.zeroTokenBridgeURL+"/generate", bytes.NewReader(body))
+	if err != nil {
+		return bridgeResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return bridgeResponse{}, fmt.Errorf("call zero-token bridge server: %w", err)
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return bridgeResponse{}, fmt.Errorf("read zero-token bridge response: %w", err)
+	}
+
+	var bridgeResp bridgeResponse
+	if err := json.Unmarshal(raw, &bridgeResp); err != nil {
+		return bridgeResponse{}, fmt.Errorf("decode zero-token bridge response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		if bridgeResp.Error != "" {
+			return bridgeResponse{}, fmt.Errorf("zero-token bridge error: %s %s", bridgeResp.Name, bridgeResp.Error)
+		}
+		return bridgeResponse{}, fmt.Errorf("zero-token bridge server returned %d", resp.StatusCode)
+	}
+	if !bridgeResp.OK {
+		return bridgeResponse{}, fmt.Errorf("zero-token bridge error: %s %s", bridgeResp.Name, bridgeResp.Error)
+	}
+	return bridgeResp, nil
+}
+
 func (a *app) generateBaseStoryboard(project projectFile, providerRef, browserProfileID string, timeoutMs int) ([]byte, error) {
 	// 构建基础 storyboard 提示词
 	basePrompt := buildBaseStoryboardPrompt(project)
 
-	payload := map[string]any{
-		"requestId":   fmt.Sprintf("storyboard_base_%d", time.Now().UnixMilli()),
-		"providerRef": providerRef,
-		"capability":  "text_image",
-		"input": map[string]any{
+	payload := zeroTokenBridgePayload{
+		RequestID:   fmt.Sprintf("storyboard_base_%d", time.Now().UnixMilli()),
+		ProviderRef: providerRef,
+		Capability:  "text_image",
+		Input: map[string]any{
 			"prompt": basePrompt,
 		},
-		"runtimeOptions": map[string]any{
+		RuntimeOptions: map[string]any{
 			"browserProfileId":   browserProfileID,
 			"timeoutMs":          timeoutMs,
 			"retryLimit":         1,
 			"saveDebugArtifacts": false,
 		},
 	}
-
-	body, err := json.Marshal(payload)
+	resp, err := a.runZeroTokenGenerate(context.Background(), payload, timeoutMs)
 	if err != nil {
 		return nil, err
-	}
-
-	cmd := exec.Command("node", a.zeroTokenCLIPath, "generate")
-	cmd.Dir = a.rootDir
-	cmd.Stdin = bytes.NewReader(body)
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("zero-token bridge failed: %w: %s", err, strings.TrimSpace(stderr.String()))
-	}
-
-	var resp bridgeResponse
-	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
-		return nil, fmt.Errorf("decode zero-token response: %w", err)
-	}
-	if !resp.OK {
-		return nil, fmt.Errorf("zero-token bridge error: %s %s", resp.Name, resp.Error)
 	}
 	if writeErr := a.writeStoryboardDebugOutput(project.ProjectID, resp.Result.Output); writeErr != nil {
 		log.Printf("write storyboard debug output failed for %s: %v", project.ProjectID, writeErr)
@@ -990,7 +1104,7 @@ func (a *app) calculateImageCount(sceneDuration float64, switchInterval int) int
 func (a *app) generateKeyframesForScene(scene map[string]any, imageCount int, project projectFile, storyboard map[string]any) (map[string]any, error) {
 	aspectRatio := project.AspectRatio
 	if aspectRatio == "" {
-		aspectRatio = "16:9"
+		aspectRatio = "9:16"
 	}
 	// 从 storyboard 中提取角色圣经、全局风格和渲染规则
 	characterBible := storyboard["character_bible"]
@@ -1004,43 +1118,23 @@ func (a *app) generateKeyframesForScene(scene map[string]any, imageCount int, pr
 	browserProfileID := "chrome_main"
 	timeoutMs := 300000
 
-	payload := map[string]any{
-		"requestId":   fmt.Sprintf("keyframes_%d", time.Now().UnixMilli()),
-		"providerRef": providerRef,
-		"capability":  "text_image",
-		"input": map[string]any{
+	payload := zeroTokenBridgePayload{
+		RequestID:   fmt.Sprintf("keyframes_%d", time.Now().UnixMilli()),
+		ProviderRef: providerRef,
+		Capability:  "text_image",
+		Input: map[string]any{
 			"prompt": keyframesPrompt,
 		},
-		"runtimeOptions": map[string]any{
+		RuntimeOptions: map[string]any{
 			"browserProfileId":   browserProfileID,
 			"timeoutMs":          timeoutMs,
 			"retryLimit":         1,
 			"saveDebugArtifacts": false,
 		},
 	}
-
-	body, err := json.Marshal(payload)
+	resp, err := a.runZeroTokenGenerate(context.Background(), payload, timeoutMs)
 	if err != nil {
 		return scene, err
-	}
-
-	cmd := exec.Command("node", a.zeroTokenCLIPath, "generate")
-	cmd.Dir = a.rootDir
-	cmd.Stdin = bytes.NewReader(body)
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return scene, fmt.Errorf("zero-token bridge failed: %w: %s", err, strings.TrimSpace(stderr.String()))
-	}
-
-	var resp bridgeResponse
-	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
-		return scene, fmt.Errorf("decode zero-token response: %w", err)
-	}
-	if !resp.OK {
-		return scene, fmt.Errorf("zero-token bridge error: %s %s", resp.Name, resp.Error)
 	}
 
 	// 解析关键帧
@@ -2053,8 +2147,8 @@ func (a *app) readStoryboardRoot(project projectFile) (map[string]any, error) {
 }
 
 func (a *app) runZeroTokenSceneImage(project projectFile, taskSceneID string, req generateSceneImageRequest, prompt string, aspectRatio string) ([]zeroTokenGeneratedImage, error) {
-	if !fileExists(a.zeroTokenCLIPath) {
-		return nil, fmt.Errorf("zero-token bridge CLI not found at %s; run npm run build first", a.zeroTokenCLIPath)
+	if !fileExists(a.zeroTokenBridgePath) {
+		return nil, fmt.Errorf("zero-token bridge server not found at %s; run npm run build first", a.zeroTokenBridgePath)
 	}
 
 	timeoutMs := req.TimeoutMs
@@ -2067,47 +2161,27 @@ func (a *app) runZeroTokenSceneImage(project projectFile, taskSceneID string, re
 	}
 	providerRef := resolveImageProviderRef(project.ProviderRef, req.ProviderRef)
 
-	payload := map[string]any{
-		"requestId":   fmt.Sprintf("image_%s_%d", taskSceneID, time.Now().UnixMilli()),
-		"projectId":   project.ProjectID,
-		"sceneId":     taskSceneID,
-		"providerRef": providerRef,
-		"capability":  "text_image",
-		"input": map[string]any{
+	payload := zeroTokenBridgePayload{
+		RequestID:   fmt.Sprintf("image_%s_%d", taskSceneID, time.Now().UnixMilli()),
+		ProjectID:   project.ProjectID,
+		SceneID:     taskSceneID,
+		ProviderRef: providerRef,
+		Capability:  "text_image",
+		Input: map[string]any{
 			"prompt":      prompt,
 			"count":       1,
 			"aspectRatio": aspectRatio,
 		},
-		"runtimeOptions": map[string]any{
+		RuntimeOptions: map[string]any{
 			"browserProfileId":   browserProfileID,
 			"timeoutMs":          timeoutMs,
 			"retryLimit":         1,
 			"saveDebugArtifacts": false,
 		},
 	}
-
-	body, err := json.Marshal(payload)
+	resp, err := a.runZeroTokenGenerate(context.Background(), payload, timeoutMs)
 	if err != nil {
 		return nil, err
-	}
-
-	cmd := exec.Command("node", a.zeroTokenCLIPath, "generate")
-	cmd.Dir = a.rootDir
-	cmd.Stdin = bytes.NewReader(body)
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("zero-token image bridge failed: %w: %s", err, strings.TrimSpace(stderr.String()))
-	}
-
-	var resp bridgeResponse
-	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
-		return nil, fmt.Errorf("decode zero-token image response: %w", err)
-	}
-	if !resp.OK {
-		return nil, fmt.Errorf("zero-token bridge error: %s %s", resp.Name, resp.Error)
 	}
 	if len(resp.Result.Output.Images) == 0 {
 		return nil, errors.New("zero-token did not return any image")
@@ -2519,7 +2593,7 @@ func resolveSceneAspectRatio(storyboard map[string]any) string {
 			return aspectRatio
 		}
 	}
-	return "16:9"
+	return "9:16"
 }
 
 func resolveSceneFPS(storyboard map[string]any) int {
@@ -3778,7 +3852,7 @@ func buildBaseStoryboardPrompt(project projectFile) string {
 	}
 	aspectRatio := project.AspectRatio
 	if aspectRatio == "" {
-		aspectRatio = "16:9"
+		aspectRatio = "9:16"
 	}
 	var aspectRatioInfo string = fmt.Sprintf("- 画面比例：%s（所有场景的视觉描述和提示词必须符合此画面比例）\n", aspectRatio)
 
@@ -4654,8 +4728,8 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
             <option value="2:3">2:3 社交媒体/自拍</option>
             <option value="3:4">3:4 经典比例/拍照</option>
             <option value="4:3">4:3 文章配图/插画</option>
-            <option value="9:16">9:16 手机壁纸/人像</option>
-            <option value="16:9" selected>16:9 桌面壁纸/风景</option>
+            <option value="9:16" selected>9:16 手机壁纸/人像</option>
+            <option value="16:9">16:9 桌面壁纸/风景</option>
           </select>
 
           <button id="createBtn">创建项目</button>
@@ -4934,7 +5008,7 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
         const items = [
           ["项目 ID", project.project_id],
           ["标题", project.title],
-          ["画面比例", project.aspect_ratio || "16:9"],
+          ["画面比例", project.aspect_ratio || "9:16"],
           ["状态", project.status],
           ["场景数", project.scene_count || 0],
           ["Storyboard 有效", project.storyboard_valid ? "yes" : "no"],

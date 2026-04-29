@@ -25,6 +25,10 @@ export class ZeroTokenRuntime {
     return this.registry.list();
   }
 
+  async shutdown(): Promise<void> {
+    await this.browser.shutdown();
+  }
+
   async generate(request: ZeroTokenRequest): Promise<ZeroTokenResult> {
     const ref = parseProviderRef(request.providerRef);
     const provider = this.registry.resolve(ref.provider);
