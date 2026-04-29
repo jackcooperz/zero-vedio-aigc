@@ -54,6 +54,13 @@ type generateSceneImageRequest struct {
 	Force            bool   `json:"force"`
 }
 
+type generateSceneKeyframesRequest struct {
+	ProviderRef      string `json:"provider_ref"`
+	BrowserProfileID string `json:"browser_profile_id"`
+	TimeoutMs        int    `json:"timeout_ms"`
+	Force            bool   `json:"force"`
+}
+
 type generateSceneAudioRequest struct {
 	ProviderRef  string `json:"provider_ref"`
 	VoiceName    string `json:"voice_name"`
@@ -468,6 +475,29 @@ func (a *app) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		scene, err := a.generateSceneImage(projectID, parts[2], req)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, os.ErrNotExist) {
+				status = http.StatusNotFound
+			}
+			writeError(w, status, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, scene)
+		return
+	}
+
+	if len(parts) == 4 && parts[1] == "scenes" && parts[3] == "keyframes" {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var req generateSceneKeyframesRequest
+		if err := decodeJSONBody(r.Body, &req); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		scene, err := a.generateSceneKeyframes(projectID, parts[2], req)
 		if err != nil {
 			status := http.StatusInternalServerError
 			if errors.Is(err, os.ErrNotExist) {
@@ -1196,6 +1226,9 @@ func (a *app) writeScenePlan(projectID string, scenes []sceneFile, now string) (
 		if err := writeJSONFile(path, scene); err != nil {
 			return nil, err
 		}
+		tasks = append(tasks,
+			newTask("scene_keyframe_prompt_generation", scene.SceneID, keyframePromptTaskStatus(scene), "Scene keyframe prompt generation queued", now),
+		)
 		// 为每个关键帧创建单独的图片生成任务
 		if len(scene.Keyframes) > 0 {
 			for i := range scene.Keyframes {
@@ -1220,6 +1253,119 @@ func (a *app) writeScenePlan(projectID string, scenes []sceneFile, now string) (
 		return nil, err
 	}
 	return tasks, nil
+}
+
+func keyframePromptTaskStatus(scene sceneFile) string {
+	if len(scene.Keyframes) > 0 {
+		return "success"
+	}
+	return "pending"
+}
+
+func sceneToStoryboardMap(scene sceneFile) map[string]any {
+	sceneMap := map[string]any{
+		"scene_id":          scene.SceneID,
+		"sequence":          scene.Sequence,
+		"title":             scene.Title,
+		"story_function":    scene.StoryFunction,
+		"narration":         scene.Narration,
+		"subtitle":          scene.Subtitle,
+		"duration_hint_sec": scene.DurationHintSec,
+		"characters":        scene.Characters,
+		"objects":           scene.Objects,
+		"environment":       scene.Environment,
+		"visual":            scene.Visual,
+		"prompt":            scene.Prompt,
+		"audio":             scene.Audio,
+		"effects":           scene.Effects,
+	}
+	if len(scene.Keyframes) > 0 {
+		keyframes := make([]map[string]any, 0, len(scene.Keyframes))
+		for _, keyframe := range scene.Keyframes {
+			keyframes = append(keyframes, map[string]any{
+				"frame_id":   keyframe.FrameID,
+				"sequence":   keyframe.Sequence,
+				"characters": keyframe.Characters,
+				"prompt":     keyframe.Prompt,
+				"visual":     keyframe.Visual,
+			})
+		}
+		sceneMap["keyframes"] = keyframes
+	}
+	return sceneMap
+}
+
+func clearKeyframeGeneratedMedia(keyframe *keyframe) {
+	keyframe.ImageCandidates = nil
+	keyframe.SelectedImageIdx = 0
+	keyframe.ImageLocalPath = ""
+	keyframe.ImageURL = ""
+	keyframe.ImagePreviewURL = ""
+	keyframe.ImageMimeType = ""
+	keyframe.ImageError = ""
+	keyframe.ImageGeneratedAt = ""
+}
+
+func clearSceneGeneratedImages(scene *sceneFile) {
+	scene.ImageProviderRef = ""
+	scene.ImagePrompt = ""
+	scene.ImageCandidates = nil
+	scene.SelectedImageIdx = 0
+	scene.ImageURL = ""
+	scene.ImageLocalPath = ""
+	scene.ImagePreviewURL = ""
+	scene.ImageMimeType = ""
+	scene.ImageError = ""
+	scene.ImageGeneratedAt = ""
+	for index := range scene.Keyframes {
+		clearKeyframeGeneratedMedia(&scene.Keyframes[index])
+	}
+}
+
+func parseKeyframesFromAny(items []any) []keyframe {
+	keyframes := make([]keyframe, 0, len(items))
+	for _, item := range items {
+		kfMap, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		frameID, _ := requiredStringField(kfMap, "frame_id")
+		sequence, _ := requiredPositiveIntField(kfMap, "sequence")
+		characters, _ := requiredStringSliceField(kfMap, "characters")
+		prompt, _ := requiredObjectField(kfMap, "prompt")
+		visual, _ := requiredObjectField(kfMap, "visual")
+		keyframes = append(keyframes, keyframe{
+			FrameID:    frameID,
+			Sequence:   sequence,
+			Characters: characters,
+			Prompt:     prompt,
+			Visual:     visual,
+		})
+	}
+	return keyframes
+}
+
+func upsertSceneKeyframeTasks(tasks []taskFile, scene sceneFile, now string) []taskFile {
+	filtered := make([]taskFile, 0, len(tasks))
+	for _, task := range tasks {
+		if task.Kind != "scene_image_generation" {
+			filtered = append(filtered, task)
+			continue
+		}
+		if task.SceneID == scene.SceneID || strings.HasPrefix(task.SceneID, scene.SceneID+"_kf") {
+			continue
+		}
+		filtered = append(filtered, task)
+	}
+	if len(scene.Keyframes) > 0 {
+		for i := range scene.Keyframes {
+			taskID := fmt.Sprintf("%s_kf%d", scene.SceneID, i)
+			filtered = append(filtered, newTask("scene_image_generation", taskID, "pending", fmt.Sprintf("Scene keyframe %d image generation queued", i+1), now))
+		}
+	} else {
+		filtered = append(filtered, newTask("scene_image_generation", scene.SceneID, "pending", "Scene image generation queued", now))
+	}
+	return filtered
 }
 
 func (a *app) generateSceneImage(projectID string, sceneID string, req generateSceneImageRequest) (sceneFile, error) {
@@ -1394,6 +1540,115 @@ func (a *app) generateSceneImage(projectID string, sceneID string, req generateS
 	}
 
 	return scene, nil
+}
+
+func (a *app) generateSceneKeyframes(projectID string, sceneID string, req generateSceneKeyframesRequest) (sceneFile, error) {
+	project, err := a.readProject(projectID)
+	if err != nil {
+		return sceneFile{}, err
+	}
+	if !project.StoryboardValid || project.StoryboardPath == "" {
+		return sceneFile{}, errors.New("storyboard is not ready or not valid")
+	}
+
+	scene, err := a.readSceneFile(projectID, sceneID)
+	if err != nil {
+		return sceneFile{}, err
+	}
+	if len(scene.Keyframes) > 0 && !req.Force {
+		return scene, nil
+	}
+
+	tasks, err := a.readTasks(projectID)
+	if err != nil {
+		return sceneFile{}, err
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	tasks = upsertTask(tasks, newTask("scene_keyframe_prompt_generation", scene.SceneID, "running", "Generating scene keyframe prompts", now))
+	if err := a.writeTasks(projectID, tasks); err != nil {
+		return sceneFile{}, err
+	}
+
+	storyboardRoot, err := a.readStoryboardRoot(project)
+	if err != nil {
+		return sceneFile{}, err
+	}
+
+	sceneMap := sceneToStoryboardMap(scene)
+	imageCount := a.calculateImageCount(a.calculateSceneDuration(sceneMap), project.ImageSwitchIntervalSec)
+	if imageCount <= 1 {
+		finishedAt := time.Now().UTC().Format(time.RFC3339)
+		scene.Keyframes = nil
+		clearSceneGeneratedImages(&scene)
+		scene.ImageStatus = "pending"
+		invalidateSceneDerivedMedia(&scene)
+		scene.UpdatedAt = finishedAt
+		if err := a.writeSceneFile(projectID, scene); err != nil {
+			return sceneFile{}, err
+		}
+		tasks = updateTaskStatus(tasks, "scene_keyframe_prompt_generation", scene.SceneID, "success", "Scene does not require keyframe prompts", "", finishedAt)
+		tasks = upsertSceneKeyframeTasks(tasks, scene, finishedAt)
+		if err := a.writeTasks(projectID, tasks); err != nil {
+			return sceneFile{}, err
+		}
+		invalidateProjectFinalVideo(&project)
+		project.UpdatedAt = finishedAt
+		if err := a.writeProject(project); err != nil {
+			return sceneFile{}, err
+		}
+		return scene, nil
+	}
+
+	enhancedScene, err := a.generateKeyframesForScene(sceneMap, imageCount, project, storyboardRoot)
+	if err != nil {
+		failedAt := time.Now().UTC().Format(time.RFC3339)
+		tasks = updateTaskStatus(tasks, "scene_keyframe_prompt_generation", scene.SceneID, "failed", "Scene keyframe prompt generation failed", err.Error(), failedAt)
+		_ = a.writeTasks(projectID, tasks)
+		return sceneFile{}, err
+	}
+
+	keyframesAny, ok := enhancedScene["keyframes"].([]any)
+	if !ok {
+		failedAt := time.Now().UTC().Format(time.RFC3339)
+		err = errors.New("generated keyframes payload is invalid")
+		tasks = updateTaskStatus(tasks, "scene_keyframe_prompt_generation", scene.SceneID, "failed", "Scene keyframe prompt generation failed", err.Error(), failedAt)
+		_ = a.writeTasks(projectID, tasks)
+		return sceneFile{}, err
+	}
+
+	updatedScene := scene
+	updatedScene.Keyframes = parseKeyframesFromAny(keyframesAny)
+	if len(updatedScene.Keyframes) == 0 {
+		failedAt := time.Now().UTC().Format(time.RFC3339)
+		err = errors.New("generated keyframes payload did not contain valid keyframes")
+		tasks = updateTaskStatus(tasks, "scene_keyframe_prompt_generation", scene.SceneID, "failed", "Scene keyframe prompt generation failed", err.Error(), failedAt)
+		_ = a.writeTasks(projectID, tasks)
+		return sceneFile{}, err
+	}
+
+	clearSceneGeneratedImages(&updatedScene)
+	updatedScene.ImageStatus = "pending"
+	invalidateSceneDerivedMedia(&updatedScene)
+	finishedAt := time.Now().UTC().Format(time.RFC3339)
+	updatedScene.UpdatedAt = finishedAt
+	if err := a.writeSceneFile(projectID, updatedScene); err != nil {
+		return sceneFile{}, err
+	}
+
+	tasks = updateTaskStatus(tasks, "scene_keyframe_prompt_generation", scene.SceneID, "success", fmt.Sprintf("Generated %d keyframe prompts", len(keyframesAny)), "", finishedAt)
+	tasks = upsertSceneKeyframeTasks(tasks, updatedScene, finishedAt)
+	if err := a.writeTasks(projectID, tasks); err != nil {
+		return sceneFile{}, err
+	}
+
+	invalidateProjectFinalVideo(&project)
+	project.UpdatedAt = finishedAt
+	if err := a.writeProject(project); err != nil {
+		return sceneFile{}, err
+	}
+
+	return updatedScene, nil
 }
 
 func (a *app) generateSceneAudio(projectID string, sceneID string, req generateSceneAudioRequest) (sceneFile, error) {
@@ -2167,7 +2422,7 @@ func pruneDerivedTasks(tasks []taskFile) []taskFile {
 	keep := make([]taskFile, 0, len(tasks))
 	for _, task := range tasks {
 		switch task.Kind {
-		case "storyboard_validation", "scene_task_split", "scene_image_generation", "scene_audio_generation", "scene_video_compositing", "final_video_compositing":
+		case "storyboard_validation", "scene_task_split", "scene_keyframe_prompt_generation", "scene_image_generation", "scene_audio_generation", "scene_video_compositing", "final_video_compositing":
 			continue
 		default:
 			keep = append(keep, task)
@@ -4429,6 +4684,7 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
             <li><code>GET /api/projects/{projectId}/scenes</code></li>
             <li><code>GET /api/projects/{projectId}/scenes/{sceneId}</code></li>
             <li><code>POST /api/projects/{projectId}/storyboard</code></li>
+            <li><code>POST /api/projects/{projectId}/scenes/{sceneId}/keyframes</code></li>
             <li><code>POST /api/projects/{projectId}/scenes/{sceneId}/image</code></li>
             <li><code>POST /api/projects/{projectId}/scenes/{sceneId}/image/select</code></li>
 			<li><code>POST /api/projects/{projectId}/scenes/{sceneId}/audio</code></li>
@@ -4734,6 +4990,19 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
             : "<div class=\"muted small\">暂无关联任务</div>";
           const canRunVideo = scene.image_status === "success" && scene.audio_status === "success";
 
+          var keyframeTask = sceneTasks.find(function(task) { return task.kind === "scene_keyframe_prompt_generation" && task.scene_id === scene.scene_id; });
+          var keyframeStatus = Array.isArray(scene.keyframes) && scene.keyframes.length > 0 ? "success" : "pending";
+          if (keyframeTask && keyframeTask.status === "running") {
+            keyframeStatus = "running";
+          } else if (keyframeTask && keyframeTask.status === "failed") {
+            keyframeStatus = "failed";
+          }
+          var keyframeBtnLabel = "关键帧提示词 (" + escapeHtml(keyframeStatus) + ")";
+          var keyframeDisabled = keyframeStatus === "running" ? " disabled" : "";
+          var keyframeForceAttrs = keyframeStatus === "success"
+            ? " class=\"force-ready\" data-force-eligible=\"true\" data-default-label=\"" + escapeHtml(keyframeBtnLabel) + "\" data-force-label=\"重新生成 关键帧提示词\""
+            : "";
+
           const imageTasks = sceneTasks.filter(function(task) { return task.kind === "scene_image_generation"; });
           const imageButtonsHtml = imageTasks.map(function(task) {
             var label = "图片任务";
@@ -4788,6 +5057,7 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
               "<div class=\"task-chips\">" + taskHtml + "</div>" +
               "<div class=\"scene-media-grid\">" + imagePanelsHtml + "</div>" +
               "<div class=\"scene-actions\">" +
+                "<button type=\"button\" data-scene-id=\"" + escapeHtml(scene.scene_id) + "\" data-scene-action=\"keyframes\"" + keyframeForceAttrs + keyframeDisabled + ">" + keyframeBtnLabel + "</button>" +
                 imageButtonsHtml +
                 "<button type=\"button\" data-scene-id=\"" + escapeHtml(scene.scene_id) + "\" data-scene-action=\"audio\"" + audioDisabled + ">" + audioBtnLabel + "</button>" +
                 "<button type=\"button\" data-scene-id=\"" + escapeHtml(scene.scene_id) + "\" data-scene-action=\"video\"" + videoForceAttrs + videoDisabled + ">" + videoBtnLabel + "</button>" +
@@ -4907,6 +5177,9 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
         if (action === "image" && button && button.dataset.forceMode === "true") {
           return { force: true };
         }
+        if (action === "keyframes" && button && button.dataset.forceMode === "true") {
+          return { force: true };
+        }
         if (action === "video" && button && button.dataset.forceMode === "true") {
           return { force: true };
         }
@@ -4977,8 +5250,9 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
           await loadProjectDetail(projectId);
           if (action === "select-image") {
             setStatus(sceneId + " 已切换到候选图 " + ((parseInt(button.dataset.candidateIndex || "0", 10)) + 1));
-          } else if ((action === "image" || action === "video") && button.dataset.forceMode === "true") {
-            setStatus(sceneId + " 已强制重生" + (action === "video" ? "视频" : "图片"));
+          } else if ((action === "image" || action === "video" || action === "keyframes") && button.dataset.forceMode === "true") {
+            var label = action === "video" ? "视频" : (action === "keyframes" ? "关键帧提示词" : "图片");
+            setStatus(sceneId + " 已强制重生" + label);
           } else {
             setStatus(sceneId + " 的 " + action + " 任务已触发");
           }
@@ -5009,6 +5283,21 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
                 if (!task.scene_id) return false;
                 return task.scene_id === scene.scene_id || task.scene_id.startsWith(scene.scene_id + "_kf");
               });
+
+              var keyframeTask = sceneTasks.find(function(task) { return task.kind === "scene_keyframe_prompt_generation" && task.scene_id === scene.scene_id; });
+              if (keyframeTask && (keyframeTask.status === "pending" || keyframeTask.status === "failed")) {
+                setStatus("场景 " + scene.scene_id + " - 关键帧提示词任务...");
+                try {
+                  await callApi("/api/projects/" + encodeURIComponent(projectId) + "/scenes/" + encodeURIComponent(scene.scene_id) + "/keyframes", { method: "POST" });
+                } catch (e) {
+                  setStatus("场景 " + scene.scene_id + " 关键帧提示词任务失败: " + e.message);
+                }
+                var keyframeDetail = await loadProjectDetail(projectId);
+                sceneTasks = (keyframeDetail.tasks || []).filter(function(task) {
+                  if (!task.scene_id) return false;
+                  return task.scene_id === scene.scene_id || task.scene_id.startsWith(scene.scene_id + "_kf");
+                });
+              }
 
               // 1. 关键帧图片任务
               var imageTasks = sceneTasks.filter(function(task) { return task.kind === "scene_image_generation"; });
