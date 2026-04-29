@@ -1491,13 +1491,13 @@ func (a *app) generateSceneAudio(projectID string, sceneID string, req generateS
 	finishedAt := time.Now().UTC().Format(time.RFC3339)
 	scene.AudioStatus = "success"
 	scene.AudioLocalPath = audioPath
-	scene.AudioPreviewURL = a.projectStaticURL(projectID, filepath.Join("assets", "audio", sceneID+audioExt))
+	scene.AudioPreviewURL = appendCacheBuster(a.projectStaticURL(projectID, filepath.Join("assets", "audio", sceneID+audioExt)), finishedAt)
 	scene.AudioMimeType = audioMimeType
 	scene.AudioDurationMs = durationMs
 	scene.AudioError = ""
 	scene.AudioGeneratedAt = finishedAt
 	scene.SubtitleLocalPath = subtitlePath
-	scene.SubtitlePreviewURL = a.projectStaticURL(projectID, filepath.Join("assets", "subtitles", sceneID+".srt"))
+	scene.SubtitlePreviewURL = appendCacheBuster(a.projectStaticURL(projectID, filepath.Join("assets", "subtitles", sceneID+".srt")), finishedAt)
 	scene.SceneDurationMs = maxInt(scene.SceneDurationMs, durationMs)
 	invalidateSceneDerivedMedia(&scene)
 	scene.UpdatedAt = finishedAt
@@ -1627,7 +1627,7 @@ func (a *app) composeSceneVideo(projectID string, sceneID string, req composeSce
 	scene.ComposeStatus = composeStatus
 	scene.ComposeMode = composeMode
 	scene.SceneVideoLocalPath = localPath
-	scene.SceneVideoPreviewURL = previewURL
+	scene.SceneVideoPreviewURL = appendCacheBuster(previewURL, finishedAt)
 	scene.SceneVideoMimeType = mimeType
 	scene.SceneDurationMs = maxInt(scene.SceneDurationMs, scene.AudioDurationMs)
 	scene.ComposeError = ""
@@ -1766,7 +1766,7 @@ func (a *app) composeFinalVideo(projectID string, req composeFinalVideoRequest) 
 		project.FinalVideoStatus = "preview_ready"
 	}
 	project.FinalVideoLocalPath = localPath
-	project.FinalVideoPreviewURL = previewURL
+	project.FinalVideoPreviewURL = appendCacheBuster(previewURL, finishedAt)
 	project.FinalVideoMimeType = mimeType
 	project.FinalVideoDurationMs = durationMs
 	project.FinalVideoError = ""
@@ -2649,6 +2649,19 @@ func (a *app) projectStaticURL(projectID string, relativePath string) string {
 	return base + "/" + trimmed
 }
 
+func appendCacheBuster(rawURL string, version string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	version = strings.TrimSpace(version)
+	if rawURL == "" || version == "" {
+		return rawURL
+	}
+	separator := "?"
+	if strings.Contains(rawURL, "?") {
+		separator = "&"
+	}
+	return rawURL + separator + "v=" + version
+}
+
 func preferredSubtitleText(scene sceneFile) string {
 	if strings.TrimSpace(scene.Subtitle) != "" {
 		return strings.TrimSpace(scene.Subtitle)
@@ -2803,11 +2816,13 @@ func runFFmpegSceneCompose(ffmpegPath string, scene sceneFile, outputPath string
 	// 检查是否有多个关键帧
 	var args []string
 	var filter string
+	audioInputIndex := 1
 
 	if len(scene.Keyframes) > 0 {
 		// 有多张图片，使用关键帧
 		imageCount := len(scene.Keyframes)
 		frameDurationSec := durationSec / float64(imageCount)
+		audioInputIndex = imageCount
 
 		// 构建输入参数
 		args = []string{"-y"}
@@ -2857,7 +2872,7 @@ func runFFmpegSceneCompose(ffmpegPath string, scene sceneFile, outputPath string
 	}
 
 	// 通用参数
-	args = append(args, "-map", "[vout]", "-map", fmt.Sprintf("%d:a:0", len(scene.Keyframes)), "-c:v", "libx264", "-preset", "veryfast", "-tune", "stillimage", "-c:a", "aac", "-movflags", "+faststart", "-shortest", outputPath)
+	args = append(args, "-map", "[vout]", "-map", fmt.Sprintf("%d:a:0", audioInputIndex), "-c:v", "libx264", "-preset", "veryfast", "-tune", "stillimage", "-c:a", "aac", "-movflags", "+faststart", "-shortest", outputPath)
 
 	cmd := exec.Command(ffmpegPath, args...)
 	var stderr bytes.Buffer
@@ -4286,6 +4301,20 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
         border: 1px solid #26304f;
         margin: 0 auto;
       }
+      .video-preview,
+      .video-preview-frame {
+        width: 100%%;
+        max-width: 100%%;
+        max-height: 220px;
+        border-radius: 10px;
+        display: block;
+        background: #060b18;
+        border: 1px solid #26304f;
+        margin: 0 auto;
+      }
+      .video-preview-frame {
+        aspect-ratio: 9 / 16;
+      }
       .image-candidates {
         display: flex;
         flex-wrap: wrap;
@@ -4551,8 +4580,74 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
           "</div>";
       }
 
+      function renderVideoPanel(scene) {
+        if (!scene || !scene.scene_video_preview_url) {
+          return "";
+        }
+        var previewUrl = scene.scene_video_preview_url;
+        var mediaHtml = "";
+        if ((scene.scene_video_mime_type || "").indexOf("video/") === 0 || /\.mp4(?:\?|$)/i.test(previewUrl)) {
+          mediaHtml = "<video class=\"video-preview\" controls preload=\"metadata\" src=\"" + escapeHtml(previewUrl) + "\"></video>";
+        } else {
+          mediaHtml = "<iframe class=\"video-preview-frame\" src=\"" + escapeHtml(previewUrl) + "\" loading=\"lazy\"></iframe>";
+        }
+        return "" +
+          "<div class=\"image-panel\">" +
+            "<h4>视频预览</h4>" +
+            mediaHtml +
+          "</div>";
+      }
+
       function isSceneTaskFinished(task) {
         return !!task && task.status === "success";
+      }
+
+      function parseTimestamp(value) {
+        if (!value) {
+          return 0;
+        }
+        var timestamp = Date.parse(value);
+        return Number.isNaN(timestamp) ? 0 : timestamp;
+      }
+
+      function resolveLatestSceneImageTimestamp(scene) {
+        var latest = parseTimestamp(scene && scene.image_generated_at);
+        if (scene && Array.isArray(scene.keyframes)) {
+          for (var i = 0; i < scene.keyframes.length; i++) {
+            var keyframeTimestamp = parseTimestamp(scene.keyframes[i] && scene.keyframes[i].image_generated_at);
+            if (keyframeTimestamp > latest) {
+              latest = keyframeTimestamp;
+            }
+          }
+        }
+        return latest;
+      }
+
+      function isSceneVideoStale(scene) {
+        if (!scene) {
+          return false;
+        }
+        var composedAt = parseTimestamp(scene.composed_at);
+        if (!composedAt) {
+          return false;
+        }
+        if (resolveLatestSceneImageTimestamp(scene) > composedAt) {
+          return true;
+        }
+        if (parseTimestamp(scene.audio_generated_at) > composedAt) {
+          return true;
+        }
+        return false;
+      }
+
+      function shouldShowVideoUpdate(scene, videoTask, canRunVideo) {
+        if (!scene || !videoTask || videoTask.status !== "success" || !canRunVideo) {
+          return false;
+        }
+        if (scene.compose_status === "success" || scene.compose_status === "preview_ready") {
+          return isSceneVideoStale(scene);
+        }
+        return !scene.compose_status;
       }
 
       function canGenerateFinalVideo(scenes, tasks) {
@@ -4662,6 +4757,7 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
           } else {
             imagePanelsHtml = renderImagePanel(scene.scene_id, "场景主图", scene);
           }
+          imagePanelsHtml += renderVideoPanel(scene);
 
           var audioTask = sceneTasks.find(function(task) { return task.kind === "scene_audio_generation" && task.scene_id === scene.scene_id; });
           var audioStatus = audioTask ? audioTask.status : "pending";
@@ -4670,8 +4766,14 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
 
           var videoTask = sceneTasks.find(function(task) { return task.kind === "scene_video_compositing" && task.scene_id === scene.scene_id; });
           var videoStatus = videoTask ? videoTask.status : "pending";
-          var videoBtnLabel = "视频任务 (" + escapeHtml(videoStatus) + ")";
+          var videoNeedsUpdate = shouldShowVideoUpdate(scene, videoTask, canRunVideo);
+          var videoBtnLabel = videoNeedsUpdate
+            ? "视频任务 (需更新)"
+            : "视频任务 (" + escapeHtml(videoStatus) + ")";
           var videoDisabled = videoStatus === "running" ? " disabled" : (canRunVideo ? "" : " disabled");
+          var videoForceAttrs = videoTask && videoTask.status === "success"
+            ? " class=\"force-ready\" data-force-eligible=\"true\" data-default-label=\"" + escapeHtml(videoBtnLabel) + "\" data-force-label=\"强制重生 视频任务\""
+            : "";
 
           return "" +
             "<div class=\"scene-card\">" +
@@ -4688,7 +4790,7 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
               "<div class=\"scene-actions\">" +
                 imageButtonsHtml +
                 "<button type=\"button\" data-scene-id=\"" + escapeHtml(scene.scene_id) + "\" data-scene-action=\"audio\"" + audioDisabled + ">" + audioBtnLabel + "</button>" +
-                "<button type=\"button\" data-scene-id=\"" + escapeHtml(scene.scene_id) + "\" data-scene-action=\"video\"" + videoDisabled + ">" + videoBtnLabel + "</button>" +
+                "<button type=\"button\" data-scene-id=\"" + escapeHtml(scene.scene_id) + "\" data-scene-action=\"video\"" + videoForceAttrs + videoDisabled + ">" + videoBtnLabel + "</button>" +
               "</div>" +
             "</div>";
         }).join("");
@@ -4805,6 +4907,9 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
         if (action === "image" && button && button.dataset.forceMode === "true") {
           return { force: true };
         }
+        if (action === "video" && button && button.dataset.forceMode === "true") {
+          return { force: true };
+        }
         if (action === "select-image" && button) {
           return { candidate_index: parseInt(button.dataset.candidateIndex || "0", 10) };
         }
@@ -4872,8 +4977,8 @@ func buildHomeHTML(projectsDir string, zeroTokenBuilt bool) string {
           await loadProjectDetail(projectId);
           if (action === "select-image") {
             setStatus(sceneId + " 已切换到候选图 " + ((parseInt(button.dataset.candidateIndex || "0", 10)) + 1));
-          } else if (action === "image" && button.dataset.forceMode === "true") {
-            setStatus(sceneId + " 已强制重生图片");
+          } else if ((action === "image" || action === "video") && button.dataset.forceMode === "true") {
+            setStatus(sceneId + " 已强制重生" + (action === "video" ? "视频" : "图片"));
           } else {
             setStatus(sceneId + " 的 " + action + " 任务已触发");
           }
