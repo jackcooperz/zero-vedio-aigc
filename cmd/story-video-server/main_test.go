@@ -105,6 +105,9 @@ func TestWriteSceneSubtitleFiles_GeneratesSegmentedSRTAndASS(t *testing.T) {
 	if !strings.Contains(assText, "Style: PictureBook") || !strings.Contains(assText, "Dialogue: 0") {
 		t.Fatalf("expected picture-book ass dialogues, got:\n%s", assText)
 	}
+	if !strings.Contains(assText, "Style: PictureBook,STHeiti,54") {
+		t.Fatalf("expected safer picture-book font size, got:\n%s", assText)
+	}
 	if !strings.Contains(assText, `\k`) {
 		t.Fatalf("expected karaoke character timing in ass, got:\n%s", assText)
 	}
@@ -231,10 +234,11 @@ func TestBuildBaseStoryboardPromptIncludesStoryPlanAndCodexOnly(t *testing.T) {
 	project := projectFile{
 		ProjectID:           "pv_test",
 		Title:               "小月亮",
-		Story:               buildThemeStoryInput(createStoryVideoFromThemeRequest{Theme: "一个胆小的小月亮学会照亮森林", CycleMode: "auto"}),
+		Story:               buildThemeStoryInput(createStoryVideoFromThemeRequest{Theme: "一个胆小的小月亮学会照亮森林", CycleMode: "auto", Platform: "douyin"}),
 		TargetDurationSec:   60,
-		AspectRatio:         "16:9",
+		AspectRatio:         defaultDouyinAspectRatio,
 		ProviderRef:         defaultCodexImageProviderRef,
+		Platform:            defaultStoryVideoPlatform,
 		StoryboardValid:     false,
 		FinalVideoStatus:    "",
 		FinalVideoLocalPath: "",
@@ -247,10 +251,166 @@ func TestBuildBaseStoryboardPromptIncludesStoryPlanAndCodexOnly(t *testing.T) {
 		defaultKokoroProviderRef,
 		defaultKokoroVoiceName,
 		defaultChildSpeakingRate,
+		defaultStoryVideoPlatformRef,
+		"quality_contract",
+		"douyin_package",
+		"first_3_seconds_hook",
+		"1-3 个完整中文短句",
+		"底部字幕安全区",
 		"故事周期模式：auto",
+		"平台预设：douyin",
 	} {
 		if !strings.Contains(prompt, needle) {
 			t.Fatalf("prompt missing %q:\n%s", needle, prompt)
+		}
+	}
+}
+
+func TestBuildProjectRequestFromThemeDefaultsToDouyinPreset(t *testing.T) {
+	req := buildProjectRequestFromTheme(createStoryVideoFromThemeRequest{
+		Theme: "不敢承认错误的小松鼠学会说真话",
+	})
+
+	if req.ProviderRef != defaultCodexImageProviderRef {
+		t.Fatalf("ProviderRef = %q, want %q", req.ProviderRef, defaultCodexImageProviderRef)
+	}
+	if req.Platform != defaultStoryVideoPlatform {
+		t.Fatalf("Platform = %q, want %q", req.Platform, defaultStoryVideoPlatform)
+	}
+	if req.AspectRatio != defaultDouyinAspectRatio {
+		t.Fatalf("AspectRatio = %q, want %q", req.AspectRatio, defaultDouyinAspectRatio)
+	}
+	if req.TargetDurationSec != defaultDouyinTargetDuration {
+		t.Fatalf("TargetDurationSec = %d, want %d", req.TargetDurationSec, defaultDouyinTargetDuration)
+	}
+	if req.ImageSwitchIntervalSec != defaultDouyinImageSwitchSec {
+		t.Fatalf("ImageSwitchIntervalSec = %d, want %d", req.ImageSwitchIntervalSec, defaultDouyinImageSwitchSec)
+	}
+	for _, needle := range []string{"平台预设：douyin", "首 3 秒", "完整短句", "封面标题"} {
+		if !strings.Contains(req.Story, needle) {
+			t.Fatalf("story input missing %q:\n%s", needle, req.Story)
+		}
+	}
+}
+
+func TestBuildStoryQualityReportForDouyinReadyProject(t *testing.T) {
+	storyboard := json.RawMessage(`{
+	  "meta": { "platform_ref": "douyin/story-video", "image_provider_ref": "codex/image" },
+	  "story_plan": { "cycle_count": 3, "cycle_reason": "短故事适合三段式", "cycles": [] },
+	  "audio_profile": { "voice_name": "zf_xiaoyi", "speaking_rate": "-30%" },
+	  "video_profile": { "aspect_ratio": "9:16" },
+	  "quality_contract": {
+	    "story_value": "勇敢承认错误",
+	    "emotional_goal": "孩子听完愿意说真话",
+	    "safety_rules": ["不惊吓"],
+	    "caption_rule": "整句字幕"
+	  },
+	  "douyin_package": {
+	    "cover_title": "小松鼠说真话",
+	    "cover_subtitle": "勇敢一点点",
+	    "douyin_title": "不敢承认错误的小松鼠",
+	    "description": "儿童绘本故事",
+	    "hashtags": ["#儿童绘本", "#睡前故事"],
+	    "first_3_seconds_hook": "小松鼠把松果打翻了，却不敢说出来。"
+	  }
+	}`)
+	project := projectFile{
+		ProjectID:         "pv_quality",
+		Title:             "小松鼠说真话",
+		ProviderRef:       defaultCodexImageProviderRef,
+		Platform:          defaultStoryVideoPlatform,
+		TargetDurationSec: defaultDouyinTargetDuration,
+		AspectRatio:       defaultDouyinAspectRatio,
+		FinalVideoStatus:  "success",
+	}
+	scenes := []sceneFile{
+		{
+			ProjectID:       project.ProjectID,
+			SceneID:         "s01",
+			Sequence:        1,
+			Title:           "打翻松果",
+			Narration:       "小松鼠把松果打翻了，却不敢说出来。它低着头，心里像藏了一颗小石头。",
+			Subtitle:        "小松鼠把松果打翻了，却不敢说出来。它低着头，心里像藏了一颗小石头。",
+			ImageStatus:     "success",
+			ImagePreviewURL: "/projects/pv_quality/s01.png",
+			AudioStatus:     "success",
+			AudioPreviewURL: "/projects/pv_quality/s01.wav",
+			SpeakingRate:    defaultChildSpeakingRate,
+			ComposeStatus:   "success",
+			SceneDurationMs: 20000,
+			CreatedAt:       time.Now().UTC().Format(time.RFC3339),
+			UpdatedAt:       time.Now().UTC().Format(time.RFC3339),
+			DurationHintSec: 20,
+			StoryFunction:   "起因",
+			Characters:      []string{"c01"},
+			Objects:         []string{"松果"},
+			Environment:     map[string]any{"location": "森林"},
+			Visual:          map[string]any{"composition": "主体中上，底部留字幕安全区"},
+			Prompt:          map[string]any{"subject_prompt": "小松鼠", "scene_prompt": "竖版绘本森林", "full_prompt": ""},
+			Audio:           map[string]any{},
+			Effects:         map[string]any{},
+		},
+		{
+			ProjectID:       project.ProjectID,
+			SceneID:         "s02",
+			Sequence:        2,
+			Title:           "想办法",
+			Narration:       "朋友们一起找松果，小松鼠越走越慢。它听见心里有个小声音，说真话才会轻松。",
+			Subtitle:        "朋友们一起找松果，小松鼠越走越慢。它听见心里有个小声音，说真话才会轻松。",
+			ImageStatus:     "success",
+			ImagePreviewURL: "/projects/pv_quality/s02.png",
+			AudioStatus:     "success",
+			AudioPreviewURL: "/projects/pv_quality/s02.wav",
+			SpeakingRate:    defaultChildSpeakingRate,
+			ComposeStatus:   "success",
+			SceneDurationMs: 20000,
+			CreatedAt:       time.Now().UTC().Format(time.RFC3339),
+			UpdatedAt:       time.Now().UTC().Format(time.RFC3339),
+			DurationHintSec: 20,
+			StoryFunction:   "转折",
+			Characters:      []string{"c01"},
+			Objects:         []string{"松果"},
+			Environment:     map[string]any{"location": "森林"},
+			Visual:          map[string]any{"composition": "主体中上，底部留字幕安全区"},
+			Prompt:          map[string]any{"subject_prompt": "小松鼠", "scene_prompt": "竖版绘本森林", "full_prompt": ""},
+			Audio:           map[string]any{},
+			Effects:         map[string]any{},
+		},
+		{
+			ProjectID:       project.ProjectID,
+			SceneID:         "s03",
+			Sequence:        3,
+			Title:           "说真话",
+			Narration:       "小松鼠终于说，对不起，是我打翻了松果。大家没有责怪它，还一起把松果重新装好。",
+			Subtitle:        "小松鼠终于说，对不起，是我打翻了松果。大家没有责怪它，还一起把松果重新装好。",
+			ImageStatus:     "success",
+			ImagePreviewURL: "/projects/pv_quality/s03.png",
+			AudioStatus:     "success",
+			AudioPreviewURL: "/projects/pv_quality/s03.wav",
+			SpeakingRate:    defaultChildSpeakingRate,
+			ComposeStatus:   "success",
+			SceneDurationMs: 20000,
+			CreatedAt:       time.Now().UTC().Format(time.RFC3339),
+			UpdatedAt:       time.Now().UTC().Format(time.RFC3339),
+			DurationHintSec: 20,
+			StoryFunction:   "解决",
+			Characters:      []string{"c01"},
+			Objects:         []string{"松果"},
+			Environment:     map[string]any{"location": "森林"},
+			Visual:          map[string]any{"composition": "主体中上，底部留字幕安全区"},
+			Prompt:          map[string]any{"subject_prompt": "小松鼠", "scene_prompt": "竖版绘本森林", "full_prompt": ""},
+			Audio:           map[string]any{},
+			Effects:         map[string]any{},
+		},
+	}
+
+	report := buildStoryQualityReport(project, storyboard, scenes)
+	if report.Score != 100 {
+		t.Fatalf("Score = %d, want 100; report=%+v", report.Score, report)
+	}
+	for _, check := range report.Checks {
+		if check.Status != "pass" {
+			t.Fatalf("check %s status = %s, want pass (%s)", check.Key, check.Status, check.Detail)
 		}
 	}
 }

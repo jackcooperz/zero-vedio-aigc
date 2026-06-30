@@ -68,7 +68,7 @@ function parseSrt(text) {
     .filter((item) => item.text && item.end > item.start);
 }
 
-function wrapText(ctx, text, maxWidth, font, maxLines = 2) {
+function wrapText(ctx, text, maxWidth, font) {
   ctx.font = font;
   const sourceLines = [String(text).replace(/\s*\n\s*/g, "")].filter(Boolean);
   const lines = [];
@@ -85,7 +85,7 @@ function wrapText(ctx, text, maxWidth, font, maxLines = 2) {
     }
     if (line) lines.push(line);
   }
-  return rebalanceShortLastLine(lines.slice(0, maxLines));
+  return rebalanceShortLastLine(lines);
 }
 
 function rebalanceShortLastLine(lines) {
@@ -160,6 +160,56 @@ function measureLines(ctx, lines) {
   return Math.max(...lines.map((line) => ctx.measureText(line).width), 1);
 }
 
+function fontSpec(fontSize) {
+  return `bold ${fontSize}px STHeiti`;
+}
+
+function buildCaptionLayout(ctx, caption, width, height) {
+  const maxWidth = width * 0.86;
+  const baseFontSize = Math.max(32, Math.round(height * 0.034));
+  const minFontSize = Math.max(26, Math.round(height * 0.024));
+  for (let fontSize = baseFontSize; fontSize >= minFontSize; fontSize -= 2) {
+    const lineHeight = Math.round(fontSize * 1.24);
+    const font = fontSpec(fontSize);
+    const lines = wrapText(ctx, caption.text, maxWidth, font);
+    if (!lines.length) continue;
+    const textWidth = measureLines(ctx, lines);
+    if (lines.length <= 3 && textWidth <= maxWidth) {
+      return {
+        name: "bottom-center",
+        x: width * 0.5,
+        y: height * 0.865,
+        maxWidth,
+        align: "center",
+        lines,
+        textWidth,
+        textHeight: lineHeight * lines.length,
+        font,
+        fontSize,
+        lineHeight,
+      };
+    }
+  }
+
+  const fontSize = minFontSize;
+  const lineHeight = Math.round(fontSize * 1.2);
+  const font = fontSpec(fontSize);
+  const lines = wrapText(ctx, caption.text, maxWidth, font);
+  return {
+    name: "bottom-center",
+    x: width * 0.5,
+    y: height * 0.855,
+    maxWidth,
+    align: "center",
+    lines,
+    textWidth: measureLines(ctx, lines),
+    textHeight: lineHeight * lines.length,
+    font,
+    fontSize,
+    lineHeight,
+  };
+}
+
 function buildCaptionLayouts(ctx, caption, width, height, font, fontSize, lineHeight) {
   const candidates = [
     { name: "bottom-center", x: width * 0.5, y: height * 0.865, maxWidth: width * 0.76, align: "center", bias: 0 },
@@ -219,12 +269,9 @@ function drawLineByChars(ctx, line, x, y, activeIndex, visibleOffset, normalStyl
 
 function drawCaption(ctx, caption, width, height, seconds) {
   if (!caption) return;
-  const fontSize = Math.max(34, Math.round(height * 0.052));
-  const lineHeight = Math.round(fontSize * 1.28);
-  const font = `bold ${fontSize}px STHeiti`;
-  ctx.font = font;
-  const layout = buildCaptionLayouts(ctx, caption, width, height, font, fontSize, lineHeight)[0];
+  const layout = buildCaptionLayout(ctx, caption, width, height);
   if (!layout) return;
+  const { font, fontSize, lineHeight } = layout;
 
   ctx.save();
   ctx.font = font;

@@ -31,7 +31,12 @@ const (
 	defaultKokoroVoiceName       = "zf_xiaoyi"
 	defaultKokoroProviderRef     = "kokoro/" + defaultKokoroVoiceName
 	defaultChildSpeakingRate     = "-30%"
-	baseCharsPerSec              = 5.6
+	defaultStoryVideoPlatform    = "douyin"
+	defaultStoryVideoPlatformRef = "douyin/story-video"
+	defaultDouyinAspectRatio     = "9:16"
+	defaultDouyinTargetDuration  = 60
+	defaultDouyinImageSwitchSec  = 8
+	baseCharsPerSec              = 4.2
 )
 
 type app struct {
@@ -50,6 +55,7 @@ type createProjectRequest struct {
 	Title                  string `json:"title"`
 	Story                  string `json:"story"`
 	ProviderRef            string `json:"provider_ref"`
+	Platform               string `json:"platform,omitempty"`
 	TargetDurationSec      int    `json:"target_duration_sec,omitempty"`
 	ImageSwitchIntervalSec int    `json:"image_switch_interval_sec,omitempty"`
 	AspectRatio            string `json:"aspect_ratio,omitempty"`
@@ -61,6 +67,7 @@ type createStoryVideoFromThemeRequest struct {
 	Audience               string `json:"audience,omitempty"`
 	Tone                   string `json:"tone,omitempty"`
 	CycleMode              string `json:"cycle_mode,omitempty"`
+	Platform               string `json:"platform,omitempty"`
 	TargetDurationSec      int    `json:"target_duration_sec,omitempty"`
 	ImageSwitchIntervalSec int    `json:"image_switch_interval_sec,omitempty"`
 	AspectRatio            string `json:"aspect_ratio,omitempty"`
@@ -142,6 +149,7 @@ type projectFile struct {
 	Title                    string `json:"title"`
 	Story                    string `json:"story"`
 	ProviderRef              string `json:"provider_ref"`
+	Platform                 string `json:"platform,omitempty"`
 	TargetDurationSec        int    `json:"target_duration_sec,omitempty"`
 	ImageSwitchIntervalSec   int    `json:"image_switch_interval_sec,omitempty"`
 	AspectRatio              string `json:"aspect_ratio,omitempty"`
@@ -192,6 +200,22 @@ type projectDetailResponse struct {
 	Scenes               []sceneFile                 `json:"scenes,omitempty"`
 	Tasks                []taskFile                  `json:"tasks"`
 	Files                map[string]string           `json:"files"`
+	QualityReport        *storyQualityReport         `json:"quality_report,omitempty"`
+}
+
+type storyQualityReport struct {
+	Platform       string         `json:"platform"`
+	Score          int            `json:"score"`
+	Checks         []qualityCheck `json:"checks"`
+	Warnings       []string       `json:"warnings,omitempty"`
+	PublishPackage map[string]any `json:"publish_package,omitempty"`
+}
+
+type qualityCheck struct {
+	Key    string `json:"key"`
+	Label  string `json:"label"`
+	Status string `json:"status"`
+	Detail string `json:"detail,omitempty"`
 }
 
 type bridgeResponse struct {
@@ -763,20 +787,25 @@ func (a *app) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 func buildProjectRequestFromTheme(req createStoryVideoFromThemeRequest) createProjectRequest {
 	targetDurationSec := req.TargetDurationSec
 	if targetDurationSec <= 0 {
-		targetDurationSec = 60
+		targetDurationSec = defaultDouyinTargetDuration
 	}
 	imageSwitchIntervalSec := req.ImageSwitchIntervalSec
 	if imageSwitchIntervalSec <= 0 {
-		imageSwitchIntervalSec = 20
+		imageSwitchIntervalSec = defaultDouyinImageSwitchSec
 	}
 	aspectRatio := strings.TrimSpace(req.AspectRatio)
 	if aspectRatio == "" {
-		aspectRatio = "16:9"
+		aspectRatio = defaultDouyinAspectRatio
+	}
+	platform := normalizeStoryVideoPlatform(req.Platform)
+	if platform == "" {
+		platform = defaultStoryVideoPlatform
 	}
 	return createProjectRequest{
 		Title:                  titleFromTheme(req),
 		Story:                  buildThemeStoryInput(req),
 		ProviderRef:            defaultCodexImageProviderRef,
+		Platform:               platform,
 		TargetDurationSec:      targetDurationSec,
 		ImageSwitchIntervalSec: imageSwitchIntervalSec,
 		AspectRatio:            aspectRatio,
@@ -812,14 +841,38 @@ func titleFromTheme(req createStoryVideoFromThemeRequest) string {
 
 func buildThemeStoryInput(req createStoryVideoFromThemeRequest) string {
 	audience := fallbackString(req.Audience, "3-6岁儿童")
-	tone := fallbackString(req.Tone, "温暖、清晰、适合睡前和绘本视频")
+	tone := fallbackString(req.Tone, "温暖、有钩子、适合抖音儿童绘本短视频")
 	cycleMode := normalizeCycleMode(req.CycleMode)
+	platform := normalizeStoryVideoPlatform(req.Platform)
+	if platform == "" {
+		platform = defaultStoryVideoPlatform
+	}
 	return strings.TrimSpace(fmt.Sprintf(`主题：%s
 受众：%s
 语气：%s
+平台预设：%s
 故事周期模式：%s
 
-请基于这个主题从零规划一个完整绘本故事。不要把主题当成已有故事全文；需要先判断适合 3 个还是 5 个周期，再生成对应的故事线、分镜、旁白、字幕、图片提示词和视频设定。`, strings.TrimSpace(req.Theme), audience, tone, cycleMode))
+请基于这个主题从零规划一个完整绘本故事。不要把主题当成已有故事全文；需要先判断适合 3 个还是 5 个周期，再生成对应的故事线、分镜、旁白、字幕、图片提示词和视频设定。
+
+抖音高质量版要求：
+- 9:16 竖版优先，第一幕前 3 秒必须出现孩子能看懂的问题、反差或悬念。
+- 每页旁白 1-3 个完整短句，字幕必须整句整句显示，不能输出单字或破碎短语。
+- 旁白按 3-6 岁儿童听感控制，语速慢、停顿清楚，不要把 60 秒塞满密集信息。
+- 画面必须像儿童绘本，不要恐怖惊吓、危险模仿、血腥暴力、成人化内容。
+- 产出可发布信息：封面标题、抖音标题、简介、话题标签和首 3 秒钩子。`, strings.TrimSpace(req.Theme), audience, tone, platform, cycleMode))
+}
+
+func normalizeStoryVideoPlatform(value string) string {
+	text := strings.ToLower(strings.TrimSpace(value))
+	switch text {
+	case "", "douyin", "抖音", "douyin/story-video", "douyin_story_video":
+		return defaultStoryVideoPlatform
+	case "generic", "default", "通用":
+		return "generic"
+	default:
+		return text
+	}
 }
 
 func normalizeCycleMode(value string) string {
@@ -878,13 +931,18 @@ func (a *app) createProject(req createProjectRequest) (projectFile, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	aspectRatio := strings.TrimSpace(req.AspectRatio)
 	if aspectRatio == "" {
-		aspectRatio = "9:16"
+		aspectRatio = defaultDouyinAspectRatio
+	}
+	platform := normalizeStoryVideoPlatform(req.Platform)
+	if platform == "" {
+		platform = defaultStoryVideoPlatform
 	}
 	project := projectFile{
 		ProjectID:              projectID,
 		Title:                  strings.TrimSpace(req.Title),
 		Story:                  strings.TrimSpace(req.Story),
 		ProviderRef:            defaultProviderRef(req.ProviderRef),
+		Platform:               platform,
 		TargetDurationSec:      req.TargetDurationSec,
 		ImageSwitchIntervalSec: req.ImageSwitchIntervalSec,
 		AspectRatio:            aspectRatio,
@@ -925,6 +983,7 @@ func (a *app) createProject(req createProjectRequest) (projectFile, error) {
 	a.recordProjectEvent(projectID, "project", "done", "项目已创建，等待生成绘本视频流水线", map[string]any{
 		"title":          project.Title,
 		"provider_ref":   project.ProviderRef,
+		"platform":       project.Platform,
 		"aspect_ratio":   project.AspectRatio,
 		"target_seconds": project.TargetDurationSec,
 	})
@@ -1012,6 +1071,7 @@ func (a *app) getProjectDetail(projectID string) (projectDetailResponse, error) 
 	if project.FinalVideoLocalPath != "" {
 		files["final_video"] = project.FinalVideoLocalPath
 	}
+	qualityReport := buildStoryQualityReport(project, storyboard, scenes)
 
 	return projectDetailResponse{
 		Project:              project,
@@ -1020,7 +1080,298 @@ func (a *app) getProjectDetail(projectID string) (projectDetailResponse, error) 
 		Scenes:               scenes,
 		Tasks:                tasks,
 		Files:                files,
+		QualityReport:        qualityReport,
 	}, nil
+}
+
+func buildStoryQualityReport(project projectFile, storyboardRaw json.RawMessage, scenes []sceneFile) *storyQualityReport {
+	var storyboard map[string]any
+	if len(storyboardRaw) > 0 {
+		_ = json.Unmarshal(storyboardRaw, &storyboard)
+	}
+	if storyboard == nil {
+		storyboard = map[string]any{}
+	}
+
+	report := &storyQualityReport{
+		Platform: fallbackString(project.Platform, defaultStoryVideoPlatform),
+		Checks:   []qualityCheck{},
+	}
+	if publishPackage, ok := storyboard["douyin_package"].(map[string]any); ok {
+		report.PublishPackage = publishPackage
+	}
+
+	add := func(key, label, status, detail string) {
+		report.Checks = append(report.Checks, qualityCheck{
+			Key:    key,
+			Label:  label,
+			Status: status,
+			Detail: detail,
+		})
+		if status == "warn" || status == "fail" {
+			if detail != "" {
+				report.Warnings = append(report.Warnings, label+"："+detail)
+			} else {
+				report.Warnings = append(report.Warnings, label)
+			}
+		}
+	}
+
+	metaPlatform := nestedString(storyboard, "meta", "platform_ref")
+	if report.Platform == defaultStoryVideoPlatform || metaPlatform == defaultStoryVideoPlatformRef {
+		add("platform", "抖音预设", "pass", "platform="+report.Platform)
+	} else {
+		add("platform", "抖音预设", "warn", "当前 platform="+fallbackString(report.Platform, "未设置"))
+	}
+
+	metaProvider := nestedString(storyboard, "meta", "image_provider_ref")
+	if project.ProviderRef == defaultCodexImageProviderRef || metaProvider == defaultCodexImageProviderRef {
+		add("image_provider", "出图 Provider", "pass", defaultCodexImageProviderRef)
+	} else {
+		add("image_provider", "出图 Provider", "fail", "当前 provider="+fallbackString(project.ProviderRef, metaProvider))
+	}
+
+	storyboardAspect := nestedString(storyboard, "video_profile", "aspect_ratio")
+	if project.AspectRatio == defaultDouyinAspectRatio || storyboardAspect == defaultDouyinAspectRatio {
+		add("aspect_ratio", "竖版画幅", "pass", defaultDouyinAspectRatio)
+	} else {
+		add("aspect_ratio", "竖版画幅", "fail", "当前画幅="+fallbackString(project.AspectRatio, storyboardAspect))
+	}
+
+	durationSec := project.TargetDurationSec
+	if durationSec <= 0 && project.FinalVideoDurationMs > 0 {
+		durationSec = int(math.Round(float64(project.FinalVideoDurationMs) / 1000))
+	}
+	switch {
+	case durationSec >= 45 && durationSec <= 75:
+		add("duration", "抖音时长", "pass", fmt.Sprintf("%d 秒", durationSec))
+	case durationSec > 0 && durationSec <= 90:
+		add("duration", "抖音时长", "warn", fmt.Sprintf("%d 秒，建议 45-75 秒", durationSec))
+	case durationSec > 0:
+		add("duration", "抖音时长", "fail", fmt.Sprintf("%d 秒过长，建议压到 90 秒内", durationSec))
+	default:
+		add("duration", "抖音时长", "pending", "等待项目时长")
+	}
+
+	if plan, ok := storyboard["story_plan"].(map[string]any); ok {
+		cycleCount := intFromAny(plan["cycle_count"])
+		if cycleCount == 3 || cycleCount == 5 {
+			add("story_plan", "故事周期", "pass", fmt.Sprintf("%d 周期", cycleCount))
+		} else {
+			add("story_plan", "故事周期", "fail", "cycle_count 需要是 3 或 5")
+		}
+	} else if len(storyboard) == 0 {
+		add("story_plan", "故事周期", "pending", "等待 Codex 规划")
+	} else {
+		add("story_plan", "故事周期", "fail", "缺少 story_plan")
+	}
+
+	hook := nestedString(storyboard, "douyin_package", "first_3_seconds_hook")
+	if hook != "" {
+		add("first_hook", "首 3 秒钩子", "pass", hook)
+	} else if len(scenes) > 0 && firstSentenceText(scenes[0].Narration) != "" {
+		add("first_hook", "首 3 秒钩子", "warn", "未显式输出 first_3_seconds_hook，已用第一页旁白承接")
+	} else if len(storyboard) == 0 {
+		add("first_hook", "首 3 秒钩子", "pending", "等待 Codex 输出")
+	} else {
+		add("first_hook", "首 3 秒钩子", "fail", "缺少孩子能立刻看懂的问题或悬念")
+	}
+
+	checkSceneCaptions(scenes, add)
+	checkNarrationPace(project, scenes, add)
+	checkSceneImages(scenes, add)
+	checkSceneAudio(scenes, storyboard, add)
+	checkPublishPackage(storyboard, add)
+
+	switch project.FinalVideoStatus {
+	case "success", "preview_ready":
+		add("final_video", "成片输出", "pass", "已生成")
+	case "failed":
+		add("final_video", "成片输出", "fail", fallbackString(project.FinalVideoError, "生成失败"))
+	case "running":
+		add("final_video", "成片输出", "pending", "合成中")
+	default:
+		add("final_video", "成片输出", "pending", "等待合成")
+	}
+
+	report.Score = storyQualityScore(report.Checks)
+	return report
+}
+
+func nestedString(root map[string]any, parentKey, key string) string {
+	parent, ok := root[parentKey].(map[string]any)
+	if !ok {
+		return ""
+	}
+	value, _ := parent[key].(string)
+	return strings.TrimSpace(value)
+}
+
+func firstSentenceText(text string) string {
+	chunks := splitSubtitleText(text, 0)
+	if len(chunks) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(chunks[0])
+}
+
+func checkSceneCaptions(scenes []sceneFile, add func(string, string, string, string)) {
+	if len(scenes) == 0 {
+		add("sentence_captions", "整句字幕", "pending", "等待分镜")
+		return
+	}
+	for _, scene := range scenes {
+		chunks := splitSubtitleText(preferredSubtitleText(scene), 0)
+		if len(chunks) == 0 {
+			add("sentence_captions", "整句字幕", "fail", sceneDisplayName(scene)+" 没有可用字幕")
+			return
+		}
+		if len(chunks) > 3 {
+			add("sentence_captions", "整句字幕", "warn", sceneDisplayName(scene)+" 超过 3 句，儿童听感会偏密")
+			return
+		}
+		for _, chunk := range chunks {
+			if countVisibleSubtitleRunes(chunk) <= 1 {
+				add("sentence_captions", "整句字幕", "fail", sceneDisplayName(scene)+" 出现单字字幕："+chunk)
+				return
+			}
+		}
+	}
+	add("sentence_captions", "整句字幕", "pass", "每页按完整短句切分")
+}
+
+func checkNarrationPace(project projectFile, scenes []sceneFile, add func(string, string, string, string)) {
+	if len(scenes) == 0 {
+		add("child_pace", "儿童语速", "pending", "等待旁白")
+		return
+	}
+	totalRunes := 0
+	for _, scene := range scenes {
+		totalRunes += countVisibleSubtitleRunes(scene.Narration)
+	}
+	durationSec := project.TargetDurationSec
+	if durationSec <= 0 && project.FinalVideoDurationMs > 0 {
+		durationSec = int(math.Round(float64(project.FinalVideoDurationMs) / 1000))
+	}
+	if durationSec <= 0 {
+		add("child_pace", "儿童语速", "pending", "等待时长")
+		return
+	}
+	charsPerSec := float64(totalRunes) / float64(durationSec)
+	detail := fmt.Sprintf("%.1f 字/秒，%d 字/%d 秒", charsPerSec, totalRunes, durationSec)
+	switch {
+	case charsPerSec <= 4.5:
+		add("child_pace", "儿童语速", "pass", detail)
+	case charsPerSec <= 5.2:
+		add("child_pace", "儿童语速", "warn", detail+"，建议继续减字")
+	default:
+		add("child_pace", "儿童语速", "fail", detail+"，儿童听感会偏快")
+	}
+}
+
+func checkSceneImages(scenes []sceneFile, add func(string, string, string, string)) {
+	if len(scenes) == 0 {
+		add("images", "绘本图", "pending", "等待分镜")
+		return
+	}
+	ready := 0
+	running := false
+	for _, scene := range scenes {
+		if sceneHasImage(scene) {
+			ready++
+			continue
+		}
+		if scene.ImageStatus == "running" {
+			running = true
+		}
+	}
+	if ready == len(scenes) {
+		add("images", "绘本图", "pass", fmt.Sprintf("%d/%d 页已出图", ready, len(scenes)))
+	} else if running || ready > 0 {
+		add("images", "绘本图", "pending", fmt.Sprintf("%d/%d 页已出图", ready, len(scenes)))
+	} else {
+		add("images", "绘本图", "pending", "等待 Codex/image")
+	}
+}
+
+func sceneHasImage(scene sceneFile) bool {
+	if scene.ImagePreviewURL != "" || scene.ImageLocalPath != "" || scene.ImageURL != "" {
+		return true
+	}
+	for _, frame := range scene.Keyframes {
+		if frame.ImagePreviewURL != "" || frame.ImageLocalPath != "" || frame.ImageURL != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func checkSceneAudio(scenes []sceneFile, storyboard map[string]any, add func(string, string, string, string)) {
+	profileVoice := nestedString(storyboard, "audio_profile", "voice_name")
+	profileRate := nestedString(storyboard, "audio_profile", "speaking_rate")
+	if len(scenes) == 0 {
+		if profileVoice == defaultKokoroVoiceName && profileRate == defaultChildSpeakingRate {
+			add("voice", "语音设定", "pass", defaultKokoroVoiceName+" "+defaultChildSpeakingRate)
+		} else {
+			add("voice", "语音设定", "pending", "等待语音")
+		}
+		return
+	}
+	ready := 0
+	rateMismatch := false
+	for _, scene := range scenes {
+		if scene.AudioStatus == "success" && scene.AudioPreviewURL != "" {
+			ready++
+		}
+		if scene.SpeakingRate != "" && scene.SpeakingRate != defaultChildSpeakingRate {
+			rateMismatch = true
+		}
+	}
+	if rateMismatch {
+		add("voice", "语音设定", "warn", "存在非默认儿童慢速 speaking_rate")
+		return
+	}
+	if ready == len(scenes) {
+		add("voice", "语音设定", "pass", defaultKokoroVoiceName+" "+defaultChildSpeakingRate)
+	} else {
+		add("voice", "语音设定", "pending", fmt.Sprintf("%d/%d 页已生成语音", ready, len(scenes)))
+	}
+}
+
+func checkPublishPackage(storyboard map[string]any, add func(string, string, string, string)) {
+	if len(storyboard) == 0 {
+		add("publish_package", "发布包", "pending", "等待 Codex 输出")
+		return
+	}
+	pkg, ok := storyboard["douyin_package"].(map[string]any)
+	if !ok {
+		add("publish_package", "发布包", "warn", "缺少 douyin_package")
+		return
+	}
+	coverTitle, _ := pkg["cover_title"].(string)
+	douyinTitle, _ := pkg["douyin_title"].(string)
+	hashtags, _ := pkg["hashtags"].([]any)
+	if strings.TrimSpace(coverTitle) != "" && strings.TrimSpace(douyinTitle) != "" && len(hashtags) > 0 {
+		add("publish_package", "发布包", "pass", "封面/标题/话题已生成")
+		return
+	}
+	add("publish_package", "发布包", "warn", "需要 cover_title、douyin_title、hashtags")
+}
+
+func storyQualityScore(checks []qualityCheck) int {
+	if len(checks) == 0 {
+		return 0
+	}
+	points := 0.0
+	for _, check := range checks {
+		switch check.Status {
+		case "pass":
+			points += 1
+		case "warn":
+			points += 0.5
+		}
+	}
+	return int(math.Round(points * 100 / float64(len(checks))))
 }
 
 func (a *app) generateStoryboard(projectID string, req generateStoryboardRequest) (projectDetailResponse, error) {
@@ -1602,9 +1953,11 @@ func codexStoryboardOutputSchema() string {
         "cycles": { "type": "array", "minItems": 3, "maxItems": 5, "items": { "type": "object" } }
       }
     },
-    "global_style": { "type": "object" },
-    "character_bible": { "type": ["object", "array"] },
-    "audio_profile": { "type": "object" },
+	    "global_style": { "type": "object" },
+	    "character_bible": { "type": ["object", "array"] },
+	    "quality_contract": { "type": "object" },
+	    "douyin_package": { "type": "object" },
+	    "audio_profile": { "type": "object" },
     "video_profile": { "type": "object" },
     "render_rules": { "type": "object" },
     "scenes": {
@@ -4485,8 +4838,8 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Main,STHeiti,58,&H00FFFFFF,&H000000FF,&HCC08111F,&H9908111F,-1,0,0,0,100,100,0,0,1,5,2,2,120,120,260,1
-Style: PictureBook,STHeiti,64,&H0038D7FF,&H00FFFFFF,&HAA07101D,&H00000000,-1,0,0,0,100,100,0,0,1,5,1,2,120,120,150,1
+Style: Main,STHeiti,54,&H00FFFFFF,&H000000FF,&HCC08111F,&H9908111F,-1,0,0,0,100,100,0,0,1,4,1,2,120,120,260,1
+Style: PictureBook,STHeiti,54,&H0038D7FF,&H00FFFFFF,&HAA07101D,&H00000000,-1,0,0,0,100,100,0,0,1,4,1,2,110,110,170,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -5620,7 +5973,7 @@ func buildBaseStoryboardPrompt(project projectFile) string {
 
 必须满足：
 1. 只返回 JSON，不要返回 markdown，不要解释。
-2. 顶层必须包含：meta, project, story_plan, global_style, character_bible, audio_profile, video_profile, render_rules, scenes。
+	2. 顶层必须包含：meta, project, story_plan, global_style, character_bible, quality_contract, douyin_package, audio_profile, video_profile, render_rules, scenes。
 3. scenes 必须是数组，每个 scene 必须包含：scene_id, sequence, title, story_function, narration, subtitle, duration_hint_sec, characters, objects, environment, visual, prompt, audio, effects。
 4. environment 必须是 object，不能是 string。visual 必须是 object，不能是 string。effects 必须是 object，不能是 string。
 5. prompt 必须是 object，并且必须包含：subject_prompt, scene_prompt, full_prompt。subject_prompt 和 scene_prompt 必须为非空字符串；full_prompt 先返回空字符串。
@@ -5629,13 +5982,19 @@ func buildBaseStoryboardPrompt(project projectFile) string {
 8. JSON 的第一个字符必须是 {，最后一个字符必须是 }。
 9. video_profile 中必须包含 aspect_ratio 字段，值为 %s。
 10. story_plan 必须是 object，包含 cycle_count, cycle_reason, cycles。cycle_count 只能是 3 或 5。
-11. 如果输入中的“故事周期模式”为 3，则 cycle_count 必须为 3；如果为 5，则 cycle_count 必须为 5；如果为 auto，则根据主题复杂度和目标时长自动判断：60 秒以内优先 3 周期，超过 60 秒或主题角色/冲突更丰富时优先 5 周期。
-12. scenes 数量必须等于 story_plan.cycle_count。3 周期使用“起因、转折、解决”；5 周期使用“引入、问题、探索、低谷/转折、解决”。
-	13. audio_profile.tts_provider_ref 必须使用 "%s"，audio_profile.voice_name 必须使用 "%s"，audio_profile.speaking_rate 必须使用 "%s"。
-14. meta.image_provider_ref 必须使用 "%s"，不得推荐或填写其它图片模型。
-15. character_bible 中每个角色都必须尽量具体，至少要稳定描述：char_id, name, type, appearance, personality, style，并且必须尽可能补充以下字段来锁定角色一致性：age、gender_presentation、face、face_shape、face_features、eyes、eyebrows、nose、mouth、hairstyle、hair_color、body_type、height_impression、skin_tone 或 body_surface、signature_outfit 或 outfit、upper_clothing、lower_clothing、shoes、accessories、color_palette、temperament、expression_habit、gesture_habit、consistency_notes。不要只写“可爱的小女孩”或“帅气少年”这种模糊描述，必须写到可以稳定复现同一角色的程度。
-16. 如果角色是非人类、动物、精灵、云朵、星星、玩偶等，也必须把对应的“脸部布局/表情区域、轮廓比例、材质、表面纹理、发光方式、标志花纹、主色和辨识特征”写具体，保证跨场景生成时仍然是同一个角色。
-17. scenes[*].prompt.subject_prompt 必须直接写出当前场景角色的稳定外貌锚点，不要只写角色编号，必须显式体现外貌长相、脸蛋/脸型、五官、年龄感、气质、特征、衣物穿着、配饰、体态，或非人角色的对应特征。
+	11. 如果输入中的“故事周期模式”为 3，则 cycle_count 必须为 3；如果为 5，则 cycle_count 必须为 5；如果为 auto，则根据主题复杂度和目标时长自动判断：抖音竖版 45-75 秒且主题有明确行为问题/冲突/情绪成长时优先 5 周期；45 秒以内、纯治愈单事件主题才优先 3 周期。
+	12. scenes 数量必须等于 story_plan.cycle_count。3 周期使用“起因、转折、解决”；5 周期使用“引入、问题、探索、低谷/转折、解决”。
+		13. audio_profile.tts_provider_ref 必须使用 "%s"，audio_profile.voice_name 必须使用 "%s"，audio_profile.speaking_rate 必须使用 "%s"。
+	14. meta.image_provider_ref 必须使用 "%s"，不得推荐或填写其它图片模型。
+	15. meta.platform_ref 必须使用 "%s"，project.platform 必须体现“抖音儿童绘本短视频”；如果画面比例是 9:16，所有视觉描述和 prompt 都必须按竖屏构图。
+	16. quality_contract 必须是 object，包含 target_age, story_value, emotional_goal, safety_rules, caption_rule, visual_rule, pace_rule。它要说明这个故事给孩子留下什么行为/情绪价值，以及哪些内容禁止出现。
+	17. douyin_package 必须是 object，包含 cover_title, cover_subtitle, douyin_title, description, hashtags, first_3_seconds_hook。cover_title 控制在 18 个中文字符以内，douyin_title 控制在 28 个中文字符以内，hashtags 给 5-8 个中文话题。
+	18. 第一幕 narration 的第一句必须在 3 秒内成立“问题/反差/悬念”，孩子一听就知道主角遇到了什么；不要用纯背景铺垫开头。
+	19. 每个 scene 的 narration 必须是 1-3 个完整中文短句，subtitle 必须是完整句版本；禁止单字、半句话、碎片短语、只输出角色名、只输出拟声词。
+	20. 所有场景 visual.composition 和 prompt.scene_prompt 必须显式保留底部字幕安全区：主体和关键表情不要压在画面底部 18%% 以内；9:16 时优先主体中上、下方留出自然绘本空间放整句字幕。
+	21. character_bible 中每个角色都必须尽量具体，至少要稳定描述：char_id, name, type, appearance, personality, style，并且必须尽可能补充以下字段来锁定角色一致性：age、gender_presentation、face、face_shape、face_features、eyes、eyebrows、nose、mouth、hairstyle、hair_color、body_type、height_impression、skin_tone 或 body_surface、signature_outfit 或 outfit、upper_clothing、lower_clothing、shoes、accessories、color_palette、temperament、expression_habit、gesture_habit、consistency_notes。不要只写“可爱的小女孩”或“帅气少年”这种模糊描述，必须写到可以稳定复现同一角色的程度。
+	22. 如果角色是非人类、动物、精灵、云朵、星星、玩偶等，也必须把对应的“脸部布局/表情区域、轮廓比例、材质、表面纹理、发光方式、标志花纹、主色和辨识特征”写具体，保证跨场景生成时仍然是同一个角色。
+	23. scenes[*].prompt.subject_prompt 必须直接写出当前场景角色的稳定外貌锚点，不要只写角色编号，必须显式体现外貌长相、脸蛋/脸型、五官、年龄感、气质、特征、衣物穿着、配饰、体态，或非人角色的对应特征。
 
 character_bible 中单个角色的推荐详细结构示例：
 {
@@ -5709,19 +6068,22 @@ scene 的最小合法结构示例：
 - 不要把 environment、visual、effects 写成一句话字符串。
 - 不要遗漏 prompt.subject_prompt 或 prompt.scene_prompt。
 - story_plan、character_bible、audio_profile、video_profile、render_rules 也要保持 object/array 结构，不要输出自然语言段落。
-- 你要先规划故事线，再输出 scenes；但最终回答只允许是一个 JSON 对象。
-- character_bible 的角色设定要足够具体，后续所有场景都要严格复用同一角色的脸、年龄感、服装/材质、主色和辨识特征。
+	- 你要先规划故事线，再输出 scenes；但最终回答只允许是一个 JSON 对象。
+	- quality_contract 和 douyin_package 要给页面直接展示，不要写成空对象。
+	- douyin_package.first_3_seconds_hook 要能直接作为开场判断标准，不能只写“吸引观众”这种空泛话。
+	- character_bible 的角色设定要足够具体，后续所有场景都要严格复用同一角色的脸、年龄感、服装/材质、主色和辨识特征。
 - 角色描述必须尽量覆盖：外貌长相、脸蛋/脸型、五官、年纪、气质、体态、衣物、穿着、配饰、主色、材质、习惯表情。
 - 根据目标视频总时长控制故事的长度和场景数量，确保 narration 的总字数适合目标时长。
 - 所有场景的视觉描述和提示词必须符合画面比例 %s 的构图要求。
 %s
-项目信息：
-- project_id: %s
-- title: %s
-%s%s%s
-用户输入：
-%s
-	`, aspectRatio, defaultKokoroProviderRef, defaultKokoroVoiceName, defaultChildSpeakingRate, defaultCodexImageProviderRef, aspectRatio, narrationLengthInfo, project.ProjectID, project.Title, durationInfo, imageSwitchInfo, aspectRatioInfo, project.Story))
+	项目信息：
+	- project_id: %s
+	- title: %s
+	- platform: %s
+	%s%s%s
+	用户输入：
+	%s
+		`, aspectRatio, defaultKokoroProviderRef, defaultKokoroVoiceName, defaultChildSpeakingRate, defaultCodexImageProviderRef, defaultStoryVideoPlatformRef, aspectRatio, narrationLengthInfo, project.ProjectID, project.Title, fallbackString(project.Platform, defaultStoryVideoPlatform), durationInfo, imageSwitchInfo, aspectRatioInfo, project.Story))
 }
 
 func buildKeyframesPrompt(scene map[string]any, imageCount int, aspectRatio string, characterBible any, globalStyle map[string]any, renderRules map[string]any) string {
@@ -6370,7 +6732,7 @@ const storyVideoHomeHTML = `<!doctype html>
         gap: 12px;
       }
       .badges {
-        grid-template-columns: repeat(3, max-content);
+        grid-template-columns: repeat(4, max-content);
         justify-content: end;
       }
       .badge {
@@ -6747,6 +7109,80 @@ const storyVideoHomeHTML = `<!doctype html>
         font-size: 11px;
         line-height: 1.35;
       }
+      .quality-wrap {
+        display: grid;
+        gap: 12px;
+      }
+      .quality-head {
+        display: grid;
+        grid-template-columns: 160px minmax(0, 1fr);
+        gap: 12px;
+      }
+      .quality-score {
+        border: 1px solid #d9e1ee;
+        border-radius: 8px;
+        background: #fbfcff;
+        padding: 12px;
+      }
+      .quality-score strong {
+        display: block;
+        font-size: 28px;
+        line-height: 1;
+      }
+      .quality-checks {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 8px;
+      }
+      .quality-check {
+        border: 1px solid #d9e1ee;
+        border-radius: 8px;
+        padding: 10px;
+        background: #fbfcff;
+      }
+      .quality-check strong {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+      }
+      .quality-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: #cbd5e1;
+        flex: 0 0 auto;
+      }
+      .quality-check.pass .quality-dot {
+        background: #16a34a;
+      }
+      .quality-check.warn .quality-dot {
+        background: #d97706;
+      }
+      .quality-check.fail .quality-dot {
+        background: #dc2626;
+      }
+      .publish-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+        gap: 8px;
+      }
+      .publish-item {
+        border: 1px solid #d9e1ee;
+        border-radius: 8px;
+        background: #ffffff;
+        padding: 10px;
+      }
+      .publish-item .k {
+        color: #64748b;
+        font-size: 11px;
+      }
+      .publish-item .v {
+        margin-top: 4px;
+        font-size: 13px;
+        line-height: 1.45;
+        overflow-wrap: anywhere;
+      }
       .scene-grid {
         grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
       }
@@ -6770,6 +7206,13 @@ const storyVideoHomeHTML = `<!doctype html>
       .scene iframe {
         min-height: 180px;
       }
+      .scene.portrait img, .scene.portrait video, .scene.portrait iframe {
+        aspect-ratio: 9 / 16;
+        max-height: 540px;
+      }
+      .scene.square img, .scene.square video, .scene.square iframe {
+        aspect-ratio: 1 / 1;
+      }
       .scene-placeholder {
         width: 100%;
         aspect-ratio: 16 / 9;
@@ -6778,6 +7221,12 @@ const storyVideoHomeHTML = `<!doctype html>
         background: repeating-linear-gradient(135deg, #f7faff 0, #f7faff 10px, #eef4fb 10px, #eef4fb 20px);
         color: #64748b;
         font-size: 13px;
+      }
+      .scene.portrait .scene-placeholder {
+        aspect-ratio: 9 / 16;
+      }
+      .scene.square .scene-placeholder {
+        aspect-ratio: 1 / 1;
       }
       .scene-status-row {
         display: flex;
@@ -6818,6 +7267,9 @@ const storyVideoHomeHTML = `<!doctype html>
         border-radius: 6px;
         border: 1px solid #d9e1ee;
         object-fit: cover;
+      }
+      .scene.portrait .keyframe-strip img {
+        aspect-ratio: 9 / 16;
       }
       .muted {
         color: #64748b;
@@ -6864,6 +7316,9 @@ const storyVideoHomeHTML = `<!doctype html>
         .project-actions button {
           flex: 1;
         }
+        .quality-head {
+          grid-template-columns: 1fr;
+        }
       }
       @media (max-width: 1180px) {
         body.progress-open main {
@@ -6890,13 +7345,14 @@ const storyVideoHomeHTML = `<!doctype html>
     <main>
       <header>
         <div>
-          <h1>Story Video</h1>
-          <p>主题输入后自动规划 3/5 周期故事线，并产出带图、带语音、带字幕的绘本故事视频。</p>
+	          <h1>Story Video · 抖音版</h1>
+	          <p>围绕一个主题自动规划 3/5 页竖版绘本故事，产出带图、带语音、整句字幕和发布包的儿童短视频。</p>
         </div>
-        <div class="badges">
-          <div class="badge">故事：Codex</div>
-          <div class="badge">出图：__DEFAULT_IMAGE_PROVIDER__</div>
-          <div class="badge">语音：__DEFAULT_VOICE__</div>
+	        <div class="badges">
+	          <div class="badge">平台：抖音竖版</div>
+	          <div class="badge">故事：Codex</div>
+	          <div class="badge">出图：__DEFAULT_IMAGE_PROVIDER__</div>
+	          <div class="badge">语音：__DEFAULT_VOICE__</div>
         </div>
       </header>
 
@@ -6904,7 +7360,7 @@ const storyVideoHomeHTML = `<!doctype html>
         <section>
           <h2>主题</h2>
           <label for="theme">故事主题</label>
-          <textarea id="theme">一个胆小的小月亮学会照亮森林</textarea>
+	          <textarea id="theme">不敢承认错误的小松鼠学会说真话</textarea>
 
           <div class="form-grid">
             <div>
@@ -6912,12 +7368,19 @@ const storyVideoHomeHTML = `<!doctype html>
               <input id="audience" value="3-6岁儿童" />
             </div>
             <div>
-              <label for="tone">语气</label>
-              <input id="tone" value="温暖、清晰、适合睡前绘本" />
-            </div>
-            <div>
-              <label for="duration">目标时长（秒）</label>
-              <input id="duration" type="number" min="20" value="60" />
+	              <label for="tone">语气</label>
+	              <input id="tone" value="温暖、有钩子、适合抖音儿童绘本短视频" />
+	            </div>
+	            <div>
+	              <label for="platformPreset">平台预设</label>
+	              <select id="platformPreset">
+	                <option value="douyin" selected>抖音高质量版</option>
+	                <option value="generic">通用绘本版</option>
+	              </select>
+	            </div>
+	            <div>
+	              <label for="duration">目标时长（秒）</label>
+	              <input id="duration" type="number" min="20" value="60" />
               <div class="field-hint">控制整条故事视频的大致长度。</div>
             </div>
             <div>
@@ -6929,19 +7392,19 @@ const storyVideoHomeHTML = `<!doctype html>
               </select>
             </div>
             <div>
-              <label for="aspectRatio">画幅</label>
-              <select id="aspectRatio">
-                <option value="16:9" selected>16:9 横版</option>
-                <option value="9:16">9:16 竖版</option>
-                <option value="1:1">1:1 方形</option>
-                <option value="4:3">4:3 绘本</option>
-              </select>
-            </div>
-            <div>
-              <label for="imageSwitch">图片切换间隔（秒）</label>
-              <input id="imageSwitch" type="number" min="1" value="20" />
-              <div class="field-hint">每隔 N 秒换一张绘本图；单页较长时会生成多张关键帧。</div>
-            </div>
+	              <label for="aspectRatio">画幅</label>
+	              <select id="aspectRatio">
+	                <option value="9:16" selected>9:16 竖版</option>
+	                <option value="16:9">16:9 横版</option>
+	                <option value="1:1">1:1 方形</option>
+	                <option value="4:3">4:3 绘本</option>
+	              </select>
+	            </div>
+	            <div>
+	              <label for="imageSwitch">图片切换间隔（秒）</label>
+	              <input id="imageSwitch" type="number" min="1" value="8" />
+	              <div class="field-hint">每隔 N 秒换一张绘本图；抖音版默认 8 秒，让一条 60 秒视频有更多画面变化。</div>
+	            </div>
           </div>
 
           <button id="generateFromThemeBtn" type="button" style="margin-top: 14px;">生成绘本视频</button>
@@ -6966,12 +7429,17 @@ const storyVideoHomeHTML = `<!doctype html>
             <div id="stageGrid" class="stage-grid"></div>
           </section>
 
-          <section>
-            <h2>故事结构</h2>
-            <div id="storyPlan" class="story-plan"></div>
-          </section>
+	          <section>
+	            <h2>故事结构</h2>
+	            <div id="storyPlan" class="story-plan"></div>
+	          </section>
 
-          <section>
+	          <section>
+	            <h2>抖音质量</h2>
+	            <div id="qualityPanel" class="quality-wrap"></div>
+	          </section>
+
+	          <section>
             <h2>绘本页生产看板</h2>
             <div id="sceneGrid" class="scene-grid"></div>
           </section>
@@ -7027,6 +7495,7 @@ const storyVideoHomeHTML = `<!doctype html>
       const projectGrid = document.getElementById("projectGrid");
       const projectList = document.getElementById("projectList");
       const storyPlan = document.getElementById("storyPlan");
+      const qualityPanel = document.getElementById("qualityPanel");
       const sceneGrid = document.getElementById("sceneGrid");
       const finalOutput = document.getElementById("finalOutput");
       const progressState = document.getElementById("progressState");
@@ -7237,15 +7706,24 @@ const storyVideoHomeHTML = `<!doctype html>
       function buildThemeStoryInputClient() {
         const theme = document.getElementById("theme").value.trim();
         const audience = document.getElementById("audience").value.trim() || "3-6岁儿童";
-        const tone = document.getElementById("tone").value.trim() || "温暖、清晰、适合睡前绘本";
+        const tone = document.getElementById("tone").value.trim() || "温暖、有钩子、适合抖音儿童绘本短视频";
+        const platform = document.getElementById("platformPreset").value || "douyin";
         const cycleMode = document.getElementById("cycleMode").value || "auto";
         return [
           "主题：" + theme,
           "受众：" + audience,
           "语气：" + tone,
+          "平台预设：" + platform,
           "故事周期模式：" + cycleMode,
           "",
-          "请基于这个主题从零规划一个完整绘本故事。不要把主题当成已有故事全文；需要先判断适合 3 个还是 5 个周期，再生成对应的故事线、分镜、旁白、字幕、图片提示词和视频设定。"
+          "请基于这个主题从零规划一个完整绘本故事。不要把主题当成已有故事全文；需要先判断适合 3 个还是 5 个周期，再生成对应的故事线、分镜、旁白、字幕、图片提示词和视频设定。",
+          "",
+          "抖音高质量版要求：",
+          "- 9:16 竖版优先，第一幕前 3 秒必须出现孩子能看懂的问题、反差或悬念。",
+          "- 每页旁白 1-3 个完整短句，字幕必须整句整句显示，不能输出单字或破碎短语。",
+          "- 旁白按 3-6 岁儿童听感控制，语速慢、停顿清楚，不要把 60 秒塞满密集信息。",
+          "- 画面必须像儿童绘本，不要恐怖惊吓、危险模仿、血腥暴力、成人化内容。",
+          "- 产出可发布信息：封面标题、抖音标题、简介、话题标签和首 3 秒钩子。"
         ].join("\n");
       }
 
@@ -7255,6 +7733,7 @@ const storyVideoHomeHTML = `<!doctype html>
           title: themeTitle(theme),
           story: buildThemeStoryInputClient(),
           provider_ref: defaultImageProvider,
+          platform: document.getElementById("platformPreset").value || "douyin",
           target_duration_sec: parseInt(document.getElementById("duration").value, 10),
           image_switch_interval_sec: parseInt(document.getElementById("imageSwitch").value, 10),
           aspect_ratio: document.getElementById("aspectRatio").value
@@ -7351,12 +7830,13 @@ const storyVideoHomeHTML = `<!doctype html>
           return;
         }
         projectIdInput.value = project.project_id;
-        projectGrid.innerHTML = [
-          metric("项目 ID", project.project_id),
-          metric("状态", project.status),
-          metric("Provider", project.provider_ref || defaultImageProvider),
-          metric("场景数", project.scene_count || 0),
-          metric("画幅", project.aspect_ratio || "-"),
+	        projectGrid.innerHTML = [
+	          metric("项目 ID", project.project_id),
+	          metric("状态", project.status),
+	          metric("平台", project.platform || "douyin"),
+	          metric("Provider", project.provider_ref || defaultImageProvider),
+	          metric("场景数", project.scene_count || 0),
+	          metric("画幅", project.aspect_ratio || "-"),
           metric("目标时长", project.target_duration_sec ? project.target_duration_sec + " 秒" : "-"),
           metric("成片状态", project.final_video_status || "pending"),
           metric("更新时间", project.updated_at || "-")
@@ -7461,8 +7941,65 @@ const storyVideoHomeHTML = `<!doctype html>
         storyPlan.innerHTML =
           "<div class=\"metric\"><div class=\"k\">结构判断</div><div class=\"v\">" + escapeHtml(plan.cycle_count) + " 周期 · " + escapeHtml(sceneCount) + " 页绘本" + (plan.cycle_reason ? " · " + escapeHtml(plan.cycle_reason) : "") + "</div></div>" +
           cycleHtml +
-          outlineHtml;
-      }
+	          outlineHtml;
+	      }
+
+	      function qualityStatusText(status) {
+	        if (status === "pass") return "通过";
+	        if (status === "warn") return "注意";
+	        if (status === "fail") return "失败";
+	        return "等待";
+	      }
+
+	      function publishValue(value) {
+	        if (Array.isArray(value)) return value.join(" ");
+	        if (value && typeof value === "object") return JSON.stringify(value);
+	        return value || "-";
+	      }
+
+	      function publishItem(label, value) {
+	        return "<div class=\"publish-item\"><div class=\"k\">" + escapeHtml(label) + "</div><div class=\"v\">" + escapeHtml(publishValue(value)) + "</div></div>";
+	      }
+
+	      function renderQualityReport(detail) {
+	        const report = detail && detail.quality_report;
+	        const storyboard = detail && detail.storyboard ? detail.storyboard : {};
+	        if (!report) {
+	          qualityPanel.innerHTML = "<div class=\"empty\">生成故事线后，这里会显示抖音版质量检查和发布包。</div>";
+	          return;
+	        }
+	        const checks = Array.isArray(report.checks) ? report.checks : [];
+	        const checksHtml = checks.length ? "<div class=\"quality-checks\">" + checks.map(function(check) {
+	          const status = check.status || "pending";
+	          return "<div class=\"quality-check " + escapeHtml(status) + "\">" +
+	            "<strong><span class=\"quality-dot\"></span>" + escapeHtml(check.label || check.key) + " · " + escapeHtml(qualityStatusText(status)) + "</strong>" +
+	            "<div class=\"project-meta\">" + escapeHtml(check.detail || "") + "</div>" +
+	          "</div>";
+	        }).join("") + "</div>" : "<div class=\"empty\">等待质量检查。</div>";
+	        const pkg = report.publish_package || storyboard.douyin_package || {};
+	        const publishHtml = pkg && Object.keys(pkg).length ? "<div class=\"publish-grid\">" +
+	          publishItem("封面标题", pkg.cover_title) +
+	          publishItem("封面副标题", pkg.cover_subtitle) +
+	          publishItem("抖音标题", pkg.douyin_title) +
+	          publishItem("首 3 秒钩子", pkg.first_3_seconds_hook) +
+	          publishItem("简介", pkg.description) +
+	          publishItem("话题", pkg.hashtags) +
+	        "</div>" : "<div class=\"empty\">Codex 还没有输出 douyin_package。</div>";
+	        const contract = storyboard.quality_contract || {};
+	        const contractHtml = contract && Object.keys(contract).length ? "<div class=\"publish-grid\">" +
+	          publishItem("故事价值", contract.story_value) +
+	          publishItem("情绪目标", contract.emotional_goal) +
+	          publishItem("安全规则", contract.safety_rules) +
+	          publishItem("字幕规则", contract.caption_rule) +
+	        "</div>" : "";
+	        qualityPanel.innerHTML =
+	          "<div class=\"quality-head\">" +
+	            "<div class=\"quality-score\"><div class=\"project-meta\">质量分</div><strong>" + escapeHtml(report.score || 0) + "</strong><div class=\"project-meta\">" + escapeHtml(report.platform || "douyin") + "</div></div>" +
+	            checksHtml +
+	          "</div>" +
+	          "<h3>发布包</h3>" + publishHtml +
+	          (contractHtml ? "<h3>质量合同</h3>" + contractHtml : "");
+	      }
 
       function firstImage(scene) {
         if (!scene) return "";
@@ -7505,12 +8042,14 @@ const storyVideoHomeHTML = `<!doctype html>
         }).join("") + "</div>";
       }
 
-      function renderScenes(scenes) {
-        if (!scenes || !scenes.length) {
-          sceneGrid.innerHTML = "<div class=\"empty\">分镜一生成，这里会立即出现每一页；图片一生成，会直接显示缩略图。</div>";
-          return;
-        }
-        sceneGrid.innerHTML = scenes.map(function(scene) {
+	      function renderScenes(scenes) {
+	        if (!scenes || !scenes.length) {
+	          sceneGrid.innerHTML = "<div class=\"empty\">分镜一生成，这里会立即出现每一页；图片一生成，会直接显示缩略图。</div>";
+	          return;
+	        }
+	        const aspect = currentDetail && currentDetail.project ? String(currentDetail.project.aspect_ratio || "") : "";
+	        const aspectClass = aspect === "9:16" ? "portrait" : aspect === "1:1" ? "square" : "landscape";
+	        sceneGrid.innerHTML = scenes.map(function(scene) {
           const image = firstImage(scene);
           const media = scene.scene_video_preview_url
             ? (String(scene.scene_video_mime_type || "").indexOf("video/") === 0
@@ -7523,7 +8062,7 @@ const storyVideoHomeHTML = `<!doctype html>
             sceneChip("字幕", subtitleStatus(scene)) +
             sceneChip("片段", scene.compose_status) +
           "</div>";
-          return "<article class=\"scene\">" +
+	          return "<article class=\"scene " + escapeHtml(aspectClass) + "\">" +
             media +
             "<div class=\"scene-body\">" +
               "<h3>" + escapeHtml(scene.sequence) + ". " + escapeHtml(scene.title || scene.scene_id) + "</h3>" +
@@ -7556,10 +8095,11 @@ const storyVideoHomeHTML = `<!doctype html>
 
       function renderDetail(detail) {
         currentDetail = detail || null;
-        renderStages(detail);
-        renderProject(detail && detail.project);
-        renderStoryPlan(detail && detail.storyboard, detail && detail.scenes);
-        renderScenes(detail && detail.scenes);
+	        renderStages(detail);
+	        renderProject(detail && detail.project);
+	        renderStoryPlan(detail && detail.storyboard, detail && detail.scenes);
+	        renderQualityReport(detail);
+	        renderScenes(detail && detail.scenes);
         renderFinal(detail && detail.project);
         renderProgressPanel();
       }
@@ -7731,6 +8271,7 @@ const storyVideoHomeHTML = `<!doctype html>
       renderProject(null);
       renderProjectList([]);
       renderStoryPlan(null, []);
+      renderQualityReport(null);
       renderScenes([]);
       renderFinal(null);
       renderProgressPanel();
