@@ -1,4 +1,10 @@
-import { ZERO_TOKEN_CAPABILITIES, type NetworkCaptureConfig, type ProviderModel, type WebProviderConfig } from "../types.js";
+import {
+  ZERO_TOKEN_CAPABILITIES,
+  type NetworkCaptureConfig,
+  type ProviderModel,
+  type WebProviderConfig,
+  type ZeroTokenProviderConfig,
+} from "../types.js";
 
 const commonTextInputSelectors = [
   "textarea",
@@ -18,6 +24,11 @@ const commonDomOutput = [
 const webModel = {
   id: "web",
   label: "Web",
+} satisfies ProviderModel;
+
+const codexImageModel = {
+  id: "image",
+  label: "Image",
 } satisfies ProviderModel;
 
 function networkCapture(
@@ -96,8 +107,29 @@ function webProvider(config: {
   };
 }
 
-export function buildDefaultZeroTokenProviders(): WebProviderConfig[] {
+function codexProvider(): ZeroTokenProviderConfig {
+  return {
+    providerId: "codex",
+    label: "Codex",
+    type: "codex",
+    enabled: true,
+    aliases: ["codex-image"],
+    capabilities: [ZERO_TOKEN_CAPABILITIES.TEXT_IMAGE],
+    transportStrategy: {
+      primary: "codex_cli",
+    },
+    cli: {
+      binEnvVars: ["ZERO_TOKEN_CODEX_PATH", "ZERO_TOKEN_CODEX_BIN"],
+      defaultBin: "codex",
+      homeEnvVar: "CODEX_HOME",
+    },
+    models: [codexImageModel],
+  };
+}
+
+export function buildDefaultZeroTokenProviders(): ZeroTokenProviderConfig[] {
   return [
+    codexProvider(),
     webProvider({
       providerId: "doubao",
       label: "Doubao",

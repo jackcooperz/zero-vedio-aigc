@@ -5,7 +5,7 @@ export const ZERO_TOKEN_CAPABILITIES = {
 
 export type ZeroTokenCapability = (typeof ZERO_TOKEN_CAPABILITIES)[keyof typeof ZERO_TOKEN_CAPABILITIES];
 
-export type ZeroTokenTransport = "browser_network_capture";
+export type ZeroTokenTransport = "browser_network_capture" | "codex_cli";
 
 export type ProviderResponseMode = "json" | "text" | "sse" | "stream";
 
@@ -91,21 +91,38 @@ export type NetworkCaptureConfig = {
   }>;
 };
 
-export type WebProviderConfig = {
+export type BaseProviderConfig = {
   providerId: string;
   label: string;
-  type: "web";
+  type: "web" | "codex";
   enabled: boolean;
   aliases?: string[];
   capabilities?: ZeroTokenCapability[];
   authProfileId?: string;
-  browserProfileId?: string;
-  responseMode?: Record<string, ProviderResponseMode>;
   transportStrategy: TransportStrategy;
   models: ProviderModel[];
+};
+
+export type WebProviderConfig = BaseProviderConfig & {
+  type: "web";
+  browserProfileId?: string;
+  responseMode?: Record<string, ProviderResponseMode>;
   domDriver: DomDriverConfig;
   networkCapture: NetworkCaptureConfig;
 };
+
+export type CodexCliConfig = {
+  binEnvVars?: string[];
+  defaultBin?: string;
+  homeEnvVar?: string;
+};
+
+export type CodexProviderConfig = BaseProviderConfig & {
+  type: "codex";
+  cli?: CodexCliConfig;
+};
+
+export type ZeroTokenProviderConfig = WebProviderConfig | CodexProviderConfig;
 
 export type ZeroTokenRequest = {
   requestId: string;
@@ -174,7 +191,7 @@ export type ZeroTokenResult = {
 };
 
 export type ZeroTokenRuntimeConfig = {
-  providers: WebProviderConfig[];
+  providers: ZeroTokenProviderConfig[];
   browserProfiles?: BrowserProfile[];
   authProfiles?: AuthProfile[];
 };

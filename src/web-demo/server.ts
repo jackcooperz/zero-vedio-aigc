@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadProjectEnv } from "../zero-token/env.js";
 import {
   ZeroTokenRuntime,
   buildDefaultBrowserProfiles,
@@ -9,6 +10,8 @@ import {
   type AuthProfile,
   type ZeroTokenCapability,
 } from "../zero-token/index.js";
+
+loadProjectEnv();
 
 const rootDir = fileURLToPath(new URL("../../", import.meta.url));
 const publicDir = join(rootDir, "src", "web-demo", "public");

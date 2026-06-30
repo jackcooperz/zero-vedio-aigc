@@ -81,13 +81,22 @@ npm run chrome:debug
 - 使用独立的 ZeroToken Chrome 用户数据目录
 - 开放 CDP 端口 `9222`
 - 默认优先复用已启动的 Debug Chrome
-- 打开常用 Web Provider 登录页
+- 默认不打开常用 Web Provider 登录页，可通过 `.env` 或命令行打开
 
 可选环境变量：
 
+```dotenv
+ZERO_TOKEN_OPEN_LOGIN_PAGES=0
+ZERO_TOKEN_CHROME_DEBUG_PORT=9222
+ZERO_TOKEN_CHROME_USER_DATA_DIR=/tmp/zero-token-chrome
+ZERO_TOKEN_RESTART_CHROME=1
+CHROME_PATH=/path/to/chrome
+```
+
+也可以临时通过命令行覆盖 `.env`：
+
 ```bash
 ZERO_TOKEN_CHROME_DEBUG_PORT=9222 npm run chrome:debug
-ZERO_TOKEN_OPEN_LOGIN_PAGES=0 npm run chrome:debug
 ZERO_TOKEN_CHROME_USER_DATA_DIR=/tmp/zero-token-chrome npm run chrome:debug
 ZERO_TOKEN_RESTART_CHROME=1 npm run chrome:debug
 CHROME_PATH=/path/to/chrome npm run chrome:debug
@@ -123,6 +132,39 @@ doubao/web
 qwen/web
 gemini/web
 glm/web
+codex/image
+```
+
+## Codex 图片 Provider
+
+`codex/image` 会直接启动真实 Codex CLI，并通过 Codex 的 image generation 工具生成图片。
+
+Codex CLI 路径通过项目根目录 `.env` 配置：
+
+```dotenv
+ZERO_TOKEN_CODEX_PATH=/absolute/path/to/codex
+# 兼容旧变量名：
+ZERO_TOKEN_CODEX_BIN=/absolute/path/to/codex
+```
+
+解析顺序：
+
+```text
+ZERO_TOKEN_CODEX_PATH -> ZERO_TOKEN_CODEX_BIN -> codex
+```
+
+如果自定义了 Codex home，也可以继续使用 Codex 自己的环境变量：
+
+```dotenv
+CODEX_HOME=/absolute/path/to/.codex
+```
+
+故事视频生成图片时传：
+
+```json
+{
+  "provider_ref": "codex/image"
+}
 ```
 
 ## 首版建议

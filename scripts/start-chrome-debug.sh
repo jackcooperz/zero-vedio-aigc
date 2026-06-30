@@ -5,6 +5,49 @@ set -euo pipefail
 # Used by ZeroToken Web Runtime to connect through Playwright connectOverCDP.
 # Compatible with macOS, Linux, WSL, and Git Bash on Windows.
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+trim() {
+  local value="$*"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+parse_env_value() {
+  local value
+  value="$(trim "$1")"
+  if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+    value="${value:1:${#value}-2}"
+  elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
+    value="${value:1:${#value}-2}"
+  else
+    value="$(trim "${value%% #*}")"
+  fi
+  printf '%s' "$value"
+}
+
+load_project_env() {
+  local env_file="$ROOT_DIR/.env"
+  [[ -f "$env_file" ]] || return 0
+  local line key value
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="$(trim "$line")"
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    [[ "$line" == export\ * ]] && line="$(trim "${line#export }")"
+    [[ "$line" == *=* ]] || continue
+    key="$(trim "${line%%=*}")"
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    if [[ -z "${!key+x}" ]]; then
+      value="$(parse_env_value "${line#*=}")"
+      export "$key=$value"
+    fi
+  done < "$env_file"
+}
+
+load_project_env
+
 PORT="${ZERO_TOKEN_CHROME_DEBUG_PORT:-9222}"
 OPEN_LOGIN_PAGES="${ZERO_TOKEN_OPEN_LOGIN_PAGES:-1}"
 RESTART_CHROME="${ZERO_TOKEN_RESTART_CHROME:-0}"
@@ -151,6 +194,7 @@ echo "Chrome: $CHROME_PATH"
 echo "CDP port: $PORT"
 echo "User data dir: $USER_DATA_DIR"
 echo "Restart existing Chrome: $RESTART_CHROME"
+echo "Open login pages: $OPEN_LOGIN_PAGES"
 echo "Log: $TMP_LOG"
 echo ""
 
@@ -259,6 +303,8 @@ if [[ "$OPEN_LOGIN_PAGES" == "1" ]]; then
     sleep 0.3
   done
   echo "Login pages opened."
+else
+  echo "Skipping Web provider login pages."
 fi
 
 echo ""

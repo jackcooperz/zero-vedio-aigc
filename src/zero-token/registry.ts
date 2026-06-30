@@ -1,5 +1,5 @@
 import { ZeroTokenError } from "./errors.js";
-import type { ProviderRef, WebProviderConfig } from "./types.js";
+import type { ProviderRef, ZeroTokenProviderConfig } from "./types.js";
 
 export function parseProviderRef(raw: string): ProviderRef {
   const trimmed = raw.trim();
@@ -23,10 +23,10 @@ export function parseProviderRef(raw: string): ProviderRef {
 }
 
 export class ProviderRegistry {
-  private readonly providers = new Map<string, WebProviderConfig>();
-  private readonly aliases = new Map<string, WebProviderConfig>();
+  private readonly providers = new Map<string, ZeroTokenProviderConfig>();
+  private readonly aliases = new Map<string, ZeroTokenProviderConfig>();
 
-  constructor(providers: WebProviderConfig[]) {
+  constructor(providers: ZeroTokenProviderConfig[]) {
     for (const provider of providers) {
       if (!provider.enabled) {
         continue;
@@ -39,11 +39,11 @@ export class ProviderRegistry {
     }
   }
 
-  list(): WebProviderConfig[] {
+  list(): ZeroTokenProviderConfig[] {
     return [...this.providers.values()];
   }
 
-  resolve(providerId: string): WebProviderConfig {
+  resolve(providerId: string): ZeroTokenProviderConfig {
     const provider = this.aliases.get(providerId);
     if (!provider) {
       throw new ZeroTokenError("PROVIDER_NOT_FOUND", `Provider not found: ${providerId}`);

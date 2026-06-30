@@ -18,7 +18,8 @@ export type ZeroTokenErrorCode =
   | "WEB_DYNAMIC_PARAM_EXPIRED"
   | "WEB_CAPTCHA_REQUIRED"
   | "WEB_RATE_LIMITED"
-  | "WEB_PAGE_CHANGED";
+  | "WEB_PAGE_CHANGED"
+  | "CODEX_CLI_UNAVAILABLE";
 
 export class ZeroTokenError extends Error {
   readonly code: ZeroTokenErrorCode;
@@ -33,4 +34,3 @@ export class ZeroTokenError extends Error {
     this.details = opts.details;
   }
 }
-

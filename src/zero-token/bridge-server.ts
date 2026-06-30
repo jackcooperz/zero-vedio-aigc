@@ -1,4 +1,5 @@
 import http from "node:http";
+import { loadProjectEnv } from "./env.js";
 import {
   ZeroTokenRuntime,
   buildDefaultBrowserProfiles,
@@ -7,6 +8,8 @@ import {
   type ZeroTokenCapability,
   type ZeroTokenRequest,
 } from "./index.js";
+
+loadProjectEnv();
 
 type BridgeGenerateInput = {
   requestId?: string;
